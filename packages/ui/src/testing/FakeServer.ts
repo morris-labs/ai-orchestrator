@@ -6,16 +6,27 @@
 // so a test fails when the fake and the contracts drift apart.
 import {
   DEFAULT_PROMPT_TEMPLATES,
+  pmItemWaits,
+  pmPointer,
   serverRoutes,
   type AccountView,
   type AioEvent,
   type ApiErrorCode,
   type BoxView,
+  type BuildMeeting,
+  type BuildSummary,
+  type BuildTaskStatus,
+  type BuildTaskView,
+  type BuildUsage,
   type ConversationSummary,
   type GlobalSettings,
   type Job,
+  type Message,
   type Mount,
   type Notification,
+  type EscalationResolve,
+  type OwnerPost,
+  type PmItem,
   type Project,
   type PromptTemplates,
   type SecretCandidate,
@@ -27,7 +38,15 @@ import {
 import type { z } from "zod";
 import type { HttpRouteKey, ResponseOf, WebSocketCtor } from "../api/client";
 import { FakeSocket } from "./FakeSocket";
-import { makeBox, makeJob, makeProject, makeSettings, projectIdFor, T0 } from "./fixtures";
+import {
+  emptyBuildUsage,
+  makeBox,
+  makeJob,
+  makeProject,
+  makeSettings,
+  projectIdFor,
+  T0,
+} from "./fixtures";
 
 /** A failure a handler throws to answer with an `ApiError`. */
 export class FakeApiError extends Error {
@@ -81,6 +100,18 @@ export interface FakeState {
   image: ImageStatus;
   updates: Updates;
   notifications: Notification[];
+  /** The builds the server has seen, in no order; `builds.list` sorts them. */
+  builds: BuildSummary[];
+  /** Each build's team chat messages, oldest first, by build id. */
+  buildMessages: Record<string, Message[]>;
+  /** Each build's tasks, by build id. */
+  buildTasks: Record<string, BuildTaskView[]>;
+  /** Each build's usage, by build id; a build without an entry has none. */
+  buildUsage: Record<string, BuildUsage>;
+  /** Each build's planning meeting under way, by build id; `builds.post` routes its seats' posts into it. */
+  buildMeetings: Record<string, BuildMeeting>;
+  /** Each build's Project manager inbox, oldest first, by build id. */
+  buildInbox: Record<string, PmItem[]>;
   /** Project ids whose container has stale mounts: `boxes.start` refuses without `force`. */
   staleProjects: string[];
   /** Subdirectory names by absolute path, for `fs.dirs`. */
@@ -99,6 +130,7 @@ export interface FakeServerOptions {
   settings?: Partial<GlobalSettings>;
   conversations?: Record<string, ConversationSummary[]>;
   accounts?: AccountView[];
+  builds?: BuildSummary[];
   /** False leaves jobs running until `finishJob()`. Default true: jobs finish right away. */
   autoFinishJobs?: boolean;
 }
@@ -180,6 +212,12 @@ export class FakeServer {
         claudeCode: { image: "2.1.300", latest: "2.1.300", stale: false },
       },
       notifications: [],
+      builds: options.builds ?? [],
+      buildMessages: {},
+      buildTasks: {},
+      buildUsage: {},
+      buildMeetings: {},
+      buildInbox: {},
       staleProjects: [],
       dirs: {
         "/home/user": ["src", "work"],
@@ -338,6 +376,125 @@ export class FakeServer {
     this.eventLog.push(numbered);
     for (const s of this.socketsFor("/api/v1/events")) s.serverSend(numbered);
     return numbered;
+  }
+
+  /**
+   * Stores a build's state and emits its `build.changed` event, as the
+   * server does when an engine reports the build.
+   */
+  putBuild(build: BuildSummary): AioEvent {
+    this.state.builds = [...this.state.builds.filter((b) => b.id !== build.id), build];
+    return this.emit({
+      type: "build.changed",
+      id: `build-${build.id}-${build.updatedAt}`,
+      time: build.updatedAt,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      build,
+    });
+  }
+
+  /** Stores team chat messages and emits a `message.sent` event for each. */
+  putMessages(messages: readonly Message[]): void {
+    for (const message of messages) {
+      const list = (this.state.buildMessages[message.buildId] ??= []);
+      list.push(message);
+      this.emit({
+        type: "message.sent",
+        id: `message-${message.buildId}-${message.id}`,
+        time: message.createdAt,
+        source: "server",
+        streamId: this.streamId,
+        seq: 0,
+        sourceSeq: 0,
+        message,
+      });
+    }
+  }
+
+  /** Stores a task's state and emits its `build.task.changed` event. */
+  putTask(
+    buildId: string,
+    task: { taskId: string; status: BuildTaskStatus; milestone?: string | null },
+    time = T0,
+  ): void {
+    const list = (this.state.buildTasks[buildId] ??= []);
+    const current = list.find((t) => t.taskId === task.taskId);
+    const next: BuildTaskView = {
+      taskId: task.taskId,
+      status: task.status,
+      milestone: task.milestone ?? current?.milestone ?? null,
+      updatedAt: time,
+    };
+    this.state.buildTasks[buildId] = [...list.filter((t) => t !== current), next].sort((a, b) =>
+      a.taskId.localeCompare(b.taskId),
+    );
+    this.emit({
+      type: "build.task.changed",
+      id: `task-${buildId}-${task.taskId}-${time}`,
+      time,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      buildId,
+      taskId: task.taskId,
+      status: task.status,
+      previousStatus: current?.status ?? null,
+      ...(task.milestone !== undefined ? { milestone: task.milestone } : {}),
+    });
+  }
+
+  /**
+   * Stores an item of a build's Project manager inbox, replacing the one
+   * with its id, and emits its `build.inbox` event, as the server relays it
+   * from the engine.
+   */
+  putInboxItem(buildId: string, item: PmItem): void {
+    const build = this.state.builds.find((b) => b.id === buildId);
+    const list = (this.state.buildInbox[buildId] ?? []).filter((i) => i.id !== item.id);
+    this.state.buildInbox[buildId] = [...list, item];
+    this.emit({
+      type: "build.inbox",
+      id: `inbox-${buildId}-${item.id}-${item.deliveredAt ?? ""}-${item.answeredAt ?? ""}`,
+      time: item.createdAt,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      buildId,
+      slug: build?.slug ?? "unknown",
+      boxId: build?.boxId ?? null,
+      item,
+    });
+  }
+
+  /**
+   * Replaces a build's usage and emits a `lease.settled` event for one of
+   * its calls, as the server does when a build call settles.
+   */
+  putBuildUsage(usage: BuildUsage, seat = "developer"): void {
+    this.state.buildUsage[usage.buildId] = usage;
+    this.emit({
+      type: "lease.settled",
+      id: `settled-${usage.buildId}-${usage.total.calls}`,
+      time: T0,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      leaseId: `${usage.buildId}-L${usage.total.calls}`,
+      runId: null,
+      buildId: usage.buildId,
+      seat,
+      vendor: "claude",
+      role: "fixer",
+      tokens: { in: 0, out: 0 },
+      premiumRequests: 0,
+      costEstimate: 0,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -879,9 +1036,152 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     return { mounts: s.state.globalMounts, staleContainers: [] };
   },
   "usage.get": () => ({ vendors: [] }),
+  "builds.list": (r, s) => ({
+    builds: s.state.builds
+      .filter((b) => !r.query.projectId || b.projectId === r.query.projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)),
+  }),
+  "builds.get": (r, s) => {
+    const build = s.state.builds.find((b) => b.id === r.params.buildId);
+    if (!build) throw new FakeApiError("not_found", `No build ${r.params.buildId as string}.`, 404);
+    return build;
+  },
+  "builds.pause": (r, s) => controlBuild(r, s, "running", "paused"),
+  "builds.resume": (r, s) => controlBuild(r, s, ["paused", "cancelled"], "running"),
+  "builds.cancel": (r, s) =>
+    controlBuild(
+      r,
+      s,
+      ["planning", "running", "paused", "waiting_escalation", "failed"],
+      "cancelled",
+    ),
+  "builds.delete": (r, s) => controlBuild(r, s, ["finished", "failed", "cancelled"], null),
+  "builds.usage": (r, s) => {
+    const buildId = r.params.buildId as string;
+    return s.state.buildUsage[buildId] ?? emptyBuildUsage(buildId);
+  },
+  "builds.messages": (r, s) => {
+    const buildId = r.params.buildId as string;
+    if (!s.state.builds.some((b) => b.id === buildId)) {
+      throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    }
+    return { messages: s.state.buildMessages[buildId] ?? [] };
+  },
+  "builds.post": (r, s) => {
+    // Like the engine: the post is a message from the owner to one agent,
+    // recorded as a decision on the addressee's task.
+    const buildId = r.params.buildId as string;
+    if (!s.state.builds.some((b) => b.id === buildId)) {
+      throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    }
+    const post = r.body as OwnerPost;
+    const meeting = s.state.buildMeetings[buildId];
+    if (
+      meeting?.status === "running" &&
+      (meeting.proposer === post.to || meeting.members.includes(post.to))
+    ) {
+      // Like the engine: a post for a seat of a meeting under way goes into the meeting.
+      meeting.posts.push({ body: post.body, postedAt: new Date().toISOString() });
+      return { route: "meeting" as const, meeting };
+    }
+    const taskId = post.taskId ?? post.toTask ?? null;
+    const milestone = post.milestone ?? null;
+    if (taskId === null && milestone === null) {
+      throw new FakeApiError("validation", "The post needs a task or a milestone.", 400);
+    }
+    const earlier = s.state.buildMessages[buildId] ?? [];
+    const message: Message = {
+      version: 1,
+      id: `M${earlier.length + 1}`,
+      buildId,
+      from: { kind: "owner" },
+      to: { kind: "seat", seat: post.to, taskId: post.toTask ?? null },
+      routing: "addressed",
+      type: post.type ?? "note",
+      taskId,
+      milestone,
+      paths: [],
+      body: post.body,
+      createdAt: new Date().toISOString(),
+    };
+    s.putMessages([message]);
+    const decisions = earlier.filter((m) => m.from.kind === "owner").length;
+    return {
+      route: "agent" as const,
+      message,
+      decision: {
+        version: 1 as const,
+        id: `D${decisions + 1}`,
+        buildId,
+        messageId: message.id,
+        to: message.to,
+        taskId,
+        milestone,
+        body: message.body,
+        createdAt: message.createdAt,
+        planChange: null,
+      },
+    };
+  },
+  "builds.tasks": (r, s) => {
+    const buildId = r.params.buildId as string;
+    if (!s.state.builds.some((b) => b.id === buildId)) {
+      throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    }
+    return { tasks: s.state.buildTasks[buildId] ?? [] };
+  },
+  "builds.inbox": (r, s) => {
+    const buildId = r.params.buildId as string;
+    const build = s.state.builds.find((b) => b.id === buildId);
+    if (!build) throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    const items = (s.state.buildInbox[buildId] ?? [])
+      .filter((item) => r.query.all === true || pmItemWaits(item))
+      .map((item) => ({ ...item, pointer: pmPointer(build.slug, item) }));
+    return { buildId, slug: build.slug, boxId: build.boxId, items };
+  },
+  "builds.resolve": (r, s) => {
+    // Like the engine: a resolution answers the escalation's inbox item, and
+    // a build that waited for it runs again.
+    const buildId = r.params.buildId as string;
+    const build = s.state.builds.find((b) => b.id === buildId);
+    if (!build) throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    const { escalation } = r.body as EscalationResolve;
+    const item = (s.state.buildInbox[buildId] ?? []).find(
+      (i) => i.kind === "escalation" && i.ref === escalation && i.answeredAt === null,
+    );
+    if (!item) {
+      throw new FakeApiError("invalid_state", `Escalation ${escalation} isn't open.`, 409);
+    }
+    s.putInboxItem(buildId, { ...item, answeredAt: new Date().toISOString() });
+    if (build.status !== "waiting_escalation") return build;
+    const next = { ...build, status: "running" as const, updatedAt: new Date().toISOString() };
+    s.putBuild(next);
+    return next;
+  },
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),
 };
+
+/**
+ * A build request: refuses a build in another status than `from` with
+ * `invalid_state`, then stores the build in `to` (`null` keeps its status)
+ * and sends its `build.changed` event.
+ */
+function controlBuild(
+  r: { params: Record<string, unknown> },
+  s: FakeServer,
+  from: BuildSummary["status"] | BuildSummary["status"][],
+  to: BuildSummary["status"] | null,
+): BuildSummary {
+  const build = s.state.builds.find((b) => b.id === r.params.buildId);
+  if (!build) throw new FakeApiError("not_found", `No build ${r.params.buildId as string}.`, 404);
+  if (!([] as string[]).concat(from).includes(build.status)) {
+    throw new FakeApiError("invalid_state", `Build ${build.slug} is ${build.status}.`, 409);
+  }
+  const next = { ...build, status: to ?? build.status, updatedAt: new Date().toISOString() };
+  s.putBuild(next);
+  return next;
+}
 
 /** Applies a settings patch: nested objects merge, `null` deletes a key, other values replace. */
 function mergePatch(target: Record<string, unknown>, patch: unknown): void {

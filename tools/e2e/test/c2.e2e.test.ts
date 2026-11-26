@@ -4,12 +4,9 @@
 // project container, registered with the server through
 // `AIO_DEV_ENGINES`. The second part sets ceilings through the API and
 // checks that the server's scheduler redirects and pauses runs.
-import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { execFile } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DEFAULT_CEILINGS,
@@ -17,79 +14,22 @@ import {
   type Finding,
   type RunState,
 } from "@aio/contracts";
-import { pinFromPem, pinnedFetch } from "@aio/contracts/tls";
-import {
-  ENGINE_MAIN,
-  SAMPLE_BUILD,
-  SERVER_MAIN,
-  childEnv,
-  cliJson,
-  freePort,
-  projectIdForRoot,
-  requireBuilt,
-  runCli,
-  startProcess,
-  tailEvents,
-  waitFor,
-  type Proc,
-} from "./harness.js";
-
-/**
- * The engine's identity, `VERSION+HASH` once the engine is built. The engine
- * reports it, and the server compares the engine's health reply with
- * `AIO_ENGINE_VERSION`, so both processes get the same value. A plain
- * version makes the server refuse the subscription (versionMatches false).
- */
-function engineIdentity(): string {
-  const version = (
-    JSON.parse(
-      readFileSync(path.join(path.dirname(ENGINE_MAIN), "..", "package.json"), "utf8"),
-    ) as { version: string }
-  ).version;
-  try {
-    const hash = readFileSync(path.join(path.dirname(ENGINE_MAIN), "identity"), "utf8").trim();
-    return /^[0-9a-f]{8,64}$/.test(hash) ? `${version}+${hash}` : version;
-  } catch {
-    return version;
-  }
-}
+import { BUILD_MAIN, childEnv, cliJson, runCli, tailEvents, waitFor } from "./harness.js";
+import { startStack, type Stack } from "./stack.js";
 
 const MOCK_SCRIPT = path.join(import.meta.dirname, "fixtures", "mock-script.json");
 const TERMINAL = ["finished", "failed", "cancelled"];
 
+let stack: Stack;
 let dir = "";
 let repo = "";
 let projectId = "";
-let home = "";
-let engine: Proc | null = null;
-let server: Proc | null = null;
-let serverUrl = "";
-let serverToken = "";
 let engineToken = "";
 let cliEnv: NodeJS.ProcessEnv = {};
-
-async function api(method: string, route: string, body?: unknown): Promise<unknown> {
-  // The server serves HTTPS; trust the certificate it wrote and nothing else.
-  const cert = readFileSync(path.join(home, ".ai-orchestrator", "server.crt"), "utf8");
-  const res = await pinnedFetch(() => pinFromPem(cert))(`${serverUrl}/api/v1${route}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${serverToken}`,
-      ...(body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`${method} ${route} answered ${res.status}: ${text}`);
-  return text === "" ? undefined : JSON.parse(text);
-}
-
-function db(): Database.Database {
-  return new Database(path.join(home, ".ai-orchestrator", "aio.db"), {
-    readonly: true,
-    fileMustExist: true,
-  });
-}
+const engine = () => stack.engine();
+const server = () => stack.server;
+const api = (method: string, route: string, body?: unknown) => stack.api(method, route, body);
+const db = () => stack.db();
 
 /** Every event the engine wrote to a run's `events.jsonl`. */
 function runEvents(runId: string): Array<Record<string, unknown>> {
@@ -135,84 +75,21 @@ async function setCeilings(ceilings: Record<string, unknown>): Promise<void> {
 }
 
 beforeAll(async () => {
-  requireBuilt();
-  dir = mkdtempSync(path.join(os.tmpdir(), "aio-e2e-"));
-  repo = execFileSync(SAMPLE_BUILD, [path.join(dir, "sample")], { encoding: "utf8" }).trim();
-  projectId = projectIdForRoot(repo);
-
-  const enginePort = await freePort();
-  const serverPort = await freePort();
-  engineToken = randomBytes(24).toString("hex");
-  const stateDir = path.join(dir, "state");
-  mkdirSync(stateDir);
-  // The engine reads its token from a file, as in a container, so the token
-  // stays out of the engine's environment.
-  const tokenFile = path.join(stateDir, "engine.token");
-  writeFileSync(tokenFile, `${engineToken}\n`, { mode: 0o600 });
-  home = path.join(dir, "home");
-  mkdirSync(path.join(home, ".ai-orchestrator"), { recursive: true });
-  writeFileSync(
-    path.join(home, ".ai-orchestrator", "config.json"),
-    JSON.stringify({ serverPort }, null, 2),
-  );
-
-  engine = startProcess(
-    ENGINE_MAIN,
-    childEnv({
-      AIO_ENGINE_TOKEN_FILE: tokenFile,
-      AIO_ENGINE_PORT: String(enginePort),
-      AIO_PROJECT_ROOT: repo,
-      AIO_CONTAINER: projectContainerName(projectId),
-      AIO_ENGINE_VERSION: engineIdentity(),
-      AIO_STATE_DIR: stateDir,
-      AIO_MOCK_VENDORS: "1",
-      AIO_MOCK_SCRIPT: MOCK_SCRIPT,
-    }),
-  );
-  await waitFor("the engine to listen", () =>
-    engine?.output().includes("The engine is listening") ? true : undefined,
-  );
-
-  server = startProcess(
-    SERVER_MAIN,
-    childEnv({
-      AIO_HOME: home,
-      AIO_ENGINE_VERSION: engineIdentity(),
-      AIO_DEV_ENGINES: `${projectId}=127.0.0.1:${enginePort}:${engineToken}`,
-    }),
-  );
-  serverUrl = `https://127.0.0.1:${serverPort}`;
-  await waitFor("the server to listen", () =>
-    server?.output().includes("listening on") ? true : undefined,
-  );
-  serverToken = readFileSync(path.join(home, ".ai-orchestrator", "server.token"), "utf8").trim();
-  // The CLI reads the token from server.token in the data directory, so it
-  // stays out of the CLI's environment.
-  cliEnv = childEnv({
-    AIO_SERVER: serverUrl,
-    AIO_DATA_DIR: path.join(home, ".ai-orchestrator"),
+  stack = await startStack({
+    engineEnv: () => ({ AIO_MOCK_VENDORS: "1", AIO_MOCK_SCRIPT: MOCK_SCRIPT }),
   });
-  // The server subscribes to the engine's event stream on its own.
-  await waitFor("the server to subscribe to the engine", () =>
-    engine?.output().includes("Event subscriber connected") ? true : undefined,
-  );
+  ({ dir, repo, projectId, engineToken, cliEnv } = stack);
 });
 
 afterAll(() => {
-  if (process.env.AIO_E2E_DEBUG === "1") {
-    console.error(`--- server\n${server?.output() ?? ""}\n--- engine\n${engine?.output() ?? ""}`);
-  }
-  for (const p of [server, engine]) {
-    if (p && p.child.exitCode === null && p.child.signalCode === null) p.child.kill("SIGKILL");
-  }
-  if (dir && process.env.AIO_E2E_KEEP !== "1") rmSync(dir, { recursive: true, force: true });
+  stack?.close();
 });
 
 describe("C2: server and engine talk", () => {
   it("registers the development engine without logging its token", () => {
-    expect(server?.output()).toContain(`Development engine for project ${projectId}`);
-    expect(server?.output()).not.toContain(engineToken);
-    expect(engine?.output()).not.toContain(engineToken);
+    expect(server().output()).toContain(`Development engine for project ${projectId}`);
+    expect(server().output()).not.toContain(engineToken);
+    expect(engine().output()).not.toContain(engineToken);
   });
 
   it("creates the project through the API at the sample repository", async () => {
@@ -319,7 +196,11 @@ describe("C2: server and engine talk", () => {
   it("gets every lease from the server's scheduler", () => {
     // The server is the engine's only event subscriber, so it answered every
     // lease request; each agent call ran under one and settled it.
-    expect(engine?.output().match(/Event subscriber connected/g)).toHaveLength(1);
+    expect(
+      engine()
+        .output()
+        .match(/Event subscriber connected/g),
+    ).toHaveLength(1);
     const events = runEvents(runId);
     const started = events.filter((e) => e.type === "agent.started").map((e) => e.leaseId);
     const settled = events.filter((e) => e.type === "lease.settled").map((e) => e.leaseId);
@@ -389,11 +270,41 @@ describe("C2: server and engine talk", () => {
     expect(run.stopReason).toBe("clean");
   });
 
+  it("answers aio-build over the engine's build socket, for its own project only", async () => {
+    const buildCli = (project: string, ...args: string[]) =>
+      new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+        execFile(
+          process.execPath,
+          [BUILD_MAIN, ...args],
+          {
+            env: childEnv({
+              AIO_BUILD_SOCKET: path.join(dir, "state", "build.sock"),
+              AIO_PROJECT_ID: project,
+              AIO_BOX_ID: "box-e2e",
+            }),
+          },
+          (err, stdout, stderr) => {
+            const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
+            resolve({ code, stdout, stderr });
+          },
+        );
+      });
+    const help = await buildCli(projectId, "--help");
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain("aio-build start SLUG [PLAN_FILE]");
+    expect(help.stdout).toContain("aio-build plan SLUG SEAT BRIEF_FILE");
+    const own = await buildCli(projectId, "status", "no-such-build");
+    expect(own).toMatchObject({ code: 4 });
+    expect(own.stderr).toContain(`Project ${projectId} has no build no-such-build`);
+    const other = await buildCli("other-project-00000000", "pause", "no-such-build");
+    expect(other.code).toBe(4);
+  });
+
   it("stops both processes with exit code 0 on SIGTERM", async () => {
-    server?.child.kill("SIGTERM");
-    expect(await server?.exited).toBe(0);
-    engine?.child.kill("SIGTERM");
-    expect(await engine?.exited).toBe(0);
-    expect(engine?.output()).toContain("The engine stopped");
+    server().child.kill("SIGTERM");
+    expect(await server().exited).toBe(0);
+    engine().child.kill("SIGTERM");
+    expect(await engine().exited).toBe(0);
+    expect(engine().output()).toContain("The engine stopped");
   });
 });

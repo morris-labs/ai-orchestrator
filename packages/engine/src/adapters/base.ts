@@ -208,23 +208,29 @@ export abstract class CliAdapter implements CliVendorAdapter {
   }
 
   private async dispatch<T>(method: AdapterMethod, req: CliRequest<T>): Promise<CliResult<T>> {
-    // A continuation keeps its session and the folder that holds the session;
-    // every other role starts fresh, as the design asks, even when the caller
-    // left a session id on the request. The folder is read once, so a change
-    // of default during a call can't split it.
-    const continuing = method === "continueReview" && req.sessionId !== undefined;
+    // A request that names a session resumes it in the folder that holds
+    // the session, such as a review continuation or a build agent that gets
+    // a message; every other call starts fresh. The folder is read once, so
+    // a change of default during a call can't split it.
+    const continuing = req.sessionId !== undefined;
     // A session started on the home folder is saved as `undefined`, which is
-    // a known folder, not a reason to read the default.
+    // a known folder, not a reason to read the default. A caller that saved
+    // the session's folder, such as a build after an engine restart, names it.
     const pinned = continuing && this.sessionFolders.has(req.sessionId as string);
+    const named = continuing && req.sessionFolder !== undefined;
     const accountFolder = pinned
       ? this.sessionFolders.get(req.sessionId as string)
-      : this.accountDir();
+      : named
+        ? (req.sessionFolder ?? undefined)
+        : this.accountDir();
+    const { sessionFolder: _folder, ...rest } = req;
     const request = {
-      ...req,
+      ...rest,
       accountFolder,
-      ...(method === "continueReview" ? {} : { sessionId: undefined }),
+      ...(continuing ? {} : { sessionId: undefined }),
     };
-    const result = await this.call(request, { method, role: METHOD_ROLES[method] });
+    const called = await this.call(request, { method, role: METHOD_ROLES[method] });
+    const result = { ...called, accountFolder: accountFolder ?? null };
     if (result.sessionId) {
       this.sessionFolders.set(result.sessionId, accountFolder);
       if (this.sessionFolders.size > MAX_SESSION_FOLDERS) {

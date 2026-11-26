@@ -286,4 +286,89 @@ export const MIGRATIONS: readonly Migration[] = [
     created_at TEXT NOT NULL
   );
 `,
+  // 9: builds. The mirror of every build an engine reports, and the build,
+  // seat, and step of a lease settlement. A build call outside a review run
+  // has no run id, so the settlements table is rebuilt with a nullable
+  // `run_id`; review settlements keep their rows, with no build.
+  `
+  CREATE TABLE IF NOT EXISTS svc_builds (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    container TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS svc_builds_project ON svc_builds (project_id, status);
+
+  CREATE TABLE svc_lease_settlements_9 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    run_id TEXT,
+    build_id TEXT,
+    seat TEXT,
+    step TEXT,
+    vendor TEXT NOT NULL,
+    role TEXT NOT NULL,
+    tokens_in INTEGER NOT NULL,
+    tokens_out INTEGER NOT NULL,
+    premium_requests REAL NOT NULL,
+    cost_estimate REAL NOT NULL
+  );
+  INSERT INTO svc_lease_settlements_9
+    (id, time, lease_id, run_id, vendor, role, tokens_in, tokens_out, premium_requests, cost_estimate)
+    SELECT id, time, lease_id, run_id, vendor, role, tokens_in, tokens_out, premium_requests,
+      cost_estimate
+    FROM svc_lease_settlements;
+  DROP TABLE svc_lease_settlements;
+  ALTER TABLE svc_lease_settlements_9 RENAME TO svc_lease_settlements;
+  CREATE INDEX IF NOT EXISTS svc_lease_settlements_build ON svc_lease_settlements (build_id);
+`,
+  // 10: the specialties of a build call's task, as a JSON array of names, so
+  // usage breaks down by specialty. Calls with none, and every older row,
+  // keep `NULL`.
+  `
+  ALTER TABLE svc_lease_settlements ADD COLUMN specialties TEXT;
+`,
+  // 11: a build's team chat messages and its tasks, mirrored from
+  // `message.sent` and `build.task.changed` events. The event log keeps only
+  // recent events, so the build view reads these tables instead.
+  `
+  CREATE TABLE IF NOT EXISTS svc_build_messages (
+    build_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    num INTEGER NOT NULL,
+    json TEXT NOT NULL,
+    PRIMARY KEY (build_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS svc_build_messages_order ON svc_build_messages (build_id, num);
+
+  CREATE TABLE IF NOT EXISTS svc_build_tasks (
+    build_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    milestone TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (build_id, task_id)
+  );
+`,
+  // 12: the usage of a build's tokens only seats, such as the Project
+  // manager, whose session makes no engine calls. The engine reads it from
+  // the session's transcripts and reports it in `build.seat.usage` events;
+  // each report replaces the one before.
+  `
+  CREATE TABLE IF NOT EXISTS svc_build_seat_usage (
+    build_id TEXT NOT NULL,
+    seat TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    tokens_in INTEGER NOT NULL,
+    tokens_out INTEGER NOT NULL,
+    since TEXT NOT NULL,
+    through TEXT NOT NULL,
+    PRIMARY KEY (build_id, seat)
+  );
+`,
 ];

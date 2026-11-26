@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiClient } from "../src/core";
-import { FakeServer, makeBoxView } from "../src/testing";
+import { FakeServer, makeBoxView, makeBuild } from "../src/testing";
 
 describe("FakeServer", () => {
   it("answers every default route within the contract", async () => {
@@ -104,6 +104,54 @@ describe("FakeServer", () => {
       body: { vendorDefaults: { codex: { model: null } } },
     });
     expect(cleared.vendorDefaults.codex).toEqual({});
+    expect(server.contractViolations).toEqual([]);
+  });
+
+  it("lists builds, reads one, and keeps a build that putBuild reports", async () => {
+    const first = makeBuild({
+      id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      projectId: "a-1",
+      slug: "add-export",
+    });
+    const server = new FakeServer({ builds: [first] });
+    const c = new ApiClient({ fetch: server.fetch });
+    const second = makeBuild({
+      id: "01JB8Z5K3W6Q2V9X4T7R0M1N2R",
+      projectId: "b-2",
+      createdAt: "2026-10-28T10:00:00Z",
+    });
+    const event = server.putBuild(second);
+    expect(event).toMatchObject({ type: "build.changed", build: second });
+    expect((await c.call("builds.list")).builds.map((b) => b.id)).toEqual([second.id, first.id]);
+    expect((await c.call("builds.list", { query: { projectId: "a-1" } })).builds).toEqual([first]);
+    server.putBuild({ ...first, status: "paused" });
+    expect(await c.call("builds.get", { params: { buildId: first.id } })).toMatchObject({
+      status: "paused",
+    });
+    await expect(
+      c.call("builds.get", { params: { buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2S" } }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(server.contractViolations).toEqual([]);
+  });
+
+  it("takes an owner post, adds it to the conversation, and answers with its decision", async () => {
+    const build = makeBuild({ id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q" });
+    const server = new FakeServer({ builds: [build] });
+    const c = new ApiClient({ fetch: server.fetch });
+    const answer = await c.call("builds.post", {
+      params: { buildId: build.id },
+      body: { to: "developer", toTask: "T1", body: "Keep whole dollars." },
+    });
+    if (answer.route !== "agent") throw new Error(`Expected the agent route, got ${answer.route}.`);
+    expect(answer.message).toMatchObject({
+      id: "M1",
+      from: { kind: "owner" },
+      to: { kind: "seat", seat: "developer", taskId: "T1" },
+      type: "note",
+    });
+    expect(answer.decision).toMatchObject({ id: "D1", messageId: "M1", taskId: "T1" });
+    const { messages } = await c.call("builds.messages", { params: { buildId: build.id } });
+    expect(messages).toEqual([answer.message]);
     expect(server.contractViolations).toEqual([]);
   });
 

@@ -12,7 +12,10 @@ import {
   VendorSchema,
   type Vendor,
 } from "./common.js";
+import { BuildIdSchema } from "./build-events.js";
 import { RootCauseSummarySchema, SeveritySchema, type Severity } from "./findings.js";
+import { SeatPlacementSchema } from "./placements.js";
+import { PolicyCommandSchema } from "./policy.js";
 import { ModelTierChoiceSchema, ModelTierSchema, type ModelTier } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
@@ -91,6 +94,10 @@ export const BALANCED_CLAUDE_ROUNDS = 2;
  * a fallback, a replacement, or a role with no available default. A person can
  * still name any vendor for a role. Copilot disproves because the `offload`
  * profile relies on it for Codex's findings.
+ *
+ * The matrix covers review runs only. A build seat's call pins the vendor
+ * that its placement names and never moves, so a seat that writes files,
+ * such as the Test engineer on Codex, runs on any vendor.
  */
 export const VENDOR_ROLES: Record<z.infer<typeof VendorSchema>, readonly AgentRole[]> = {
   claude: ["reviewer", "disprover", "fixer", "sweeper"],
@@ -205,6 +212,51 @@ export function profileRoles(profile: Profile, round: number): RoleAssignment {
   }
 }
 
+/**
+ * The option a build sets on the review run it starts. The run's calls name
+ * the build, so the server exempts them from the usage ceilings, and the
+ * fixer takes the build's seat: its vendor, tier, and effort, as a fresh
+ * agent with the task context in its prompt.
+ */
+export const BuildRunOptionSchema = z.object({
+  buildId: BuildIdSchema,
+  fixer: z.object({
+    /** The seat that fills the fixer role, such as the Developer, with its placement. */
+    placement: SeatPlacementSchema,
+    /** The build's task context, which the fixer's prompt carries. */
+    context: z.string().min(1),
+  }),
+  /**
+   * The build plan's commands, which the run's gate runs in place of the
+   * policy file's tests, type checks, and lint. The rest of the policy file
+   * still applies. Absent only on a run that a build started before the
+   * field existed; that run gates with the policy file's commands.
+   */
+  gate: z
+    .object({
+      tests: z.array(PolicyCommandSchema),
+      typecheck: z.array(PolicyCommandSchema),
+      lint: z.array(PolicyCommandSchema),
+      /**
+       * The build baseline's known failing and flaky tests, as failure lines
+       * of each test command. The run's gate doesn't count a failure on one
+       * of these as a regression. Absent on runs that builds started before
+       * the field existed.
+       */
+      excused: z
+        .array(
+          z.object({
+            command: z.string().min(1),
+            cwd: z.string().min(1).nullable(),
+            failures: z.array(z.string()),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
+});
+export type BuildRunOption = z.infer<typeof BuildRunOptionSchema>;
+
 /** A run request with every default resolved, as `RunState.request` stores it. */
 export const ResolvedRunRequestSchema = z.object({
   projectId: z.string().min(1),
@@ -276,6 +328,18 @@ export const ResolvedRunRequestSchema = z.object({
    * root cause (`RunState.rootCauses`). Absent or false skips it.
    */
   rootCauses: z.boolean().optional(),
+  /**
+   * The post-push loop requests a Copilot review of each pushed head and
+   * waits for it. False skips the request, and the loop waits for the checks
+   * only. Absent in runs that predate the option, which keep the review. See
+   * `wantsCopilotReview`.
+   */
+  copilotReview: z.boolean().optional(),
+  /**
+   * Set only on a run that a build starts inside the engine. Absent on a
+   * stand-alone run; the server's `runs.create` drops it.
+   */
+  build: BuildRunOptionSchema.optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -293,6 +357,7 @@ export const RunRequestFieldsSchema = ResolvedRunRequestSchema.extend({
   overlapThreshold: FractionSchema.default(0.5),
   continuationCap: z.number().int().nonnegative().optional(),
   depth: RunDepthSchema.default("standard"),
+  copilotReview: z.boolean().default(false),
 });
 
 /**
@@ -323,6 +388,14 @@ function resolveRequest<
     continuationCap: r.continuationCap ?? defaults.continuationCap,
     ...(verifyFloor ? { verifyFloor } : {}),
   };
+}
+
+/**
+ * True when the post-push loop requests a Copilot review. A request without
+ * the option comes from a run that predates it, which keeps the review.
+ */
+export function wantsCopilotReview(request: { copilotReview?: boolean | undefined }): boolean {
+  return request.copilotReview ?? true;
 }
 
 /** The reason every layer gives when it refuses a read-only post-push request. */
@@ -367,8 +440,9 @@ function refuseReadOnlyPostPush(
  * What starts a run: the body of the server's `runs.create`. Defaults follow
  * design.md. A read-only request can't use the post-push pipeline.
  */
-export const RunRequestSchema =
-  RunRequestFieldsSchema.superRefine(refuseReadOnlyPostPush).transform(resolveRequest);
+export const RunRequestSchema = RunRequestFieldsSchema.omit({ build: true })
+  .superRefine(refuseReadOnlyPostPush)
+  .transform(resolveRequest);
 export type RunRequest = z.infer<typeof RunRequestSchema>;
 export type RunRequestInput = z.input<typeof RunRequestSchema>;
 

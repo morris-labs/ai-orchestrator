@@ -96,6 +96,7 @@ import {
   type CallTier,
   type RunContext,
 } from "./context.js";
+import { placeCall } from "../build/placements/index.js";
 import { snapshotTree } from "./tree-guard.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
@@ -1803,6 +1804,7 @@ export async function runFix(
       }
       const before = start.before;
       const prompt = fixerPrompt({
+        taskContext: ctx.state.request.build?.fixer.context,
         standard: runDepth(ctx.state.request) === "standard",
         range: await ctx.range(),
         findings,
@@ -1819,17 +1821,30 @@ export async function runFix(
         await roundGroups(ctx),
         gateFailure ? undefined : findings.flatMap((f) => (f.file ? [f.file] : [])),
       );
-      const out = await ctx.callAgent<FixOutput>({
+      const call = {
         key,
-        role: "fixer",
-        vendor: ctx.state.roles.fixer,
-        method: "fix",
-        request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "write" },
+        role: "fixer" as const,
+        method: "fix" as const,
+        request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "write" as const },
         groupId: findings[0]?.groupId ?? null,
         estimateTokens: estimateTokens(prompt) + 8000,
-        allowFallback: false,
-        ...(fixTier ? { tier: fixTier } : {}),
-      });
+      };
+      const build = ctx.state.request.build;
+      // A build's fixer is its seat's agent: the seat's vendor, tier, and
+      // effort, and a fresh session for every batch.
+      const out = await ctx.callAgent<FixOutput>(
+        build
+          ? placeCall(
+              { ...call, seat: build.fixer.placement.seat, step: "review" },
+              { ...build.fixer.placement, fresh: true },
+            )
+          : {
+              ...call,
+              vendor: ctx.state.roles.fixer,
+              allowFallback: false,
+              ...(fixTier ? { tier: fixTier } : {}),
+            },
+      );
       const after = await ctx.git.head();
       if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
         throw new Error(
@@ -1901,7 +1916,7 @@ export async function runGateStage(ctx: RunContext, nextStage: Stage): Promise<G
     signal: ctx.signal,
   });
   warnLeftovers(ctx, run);
-  const comparison = compareGate(baseline, run);
+  const comparison = compareGate(baseline, run, ctx.state.request.build?.gate?.excused);
   const record: GateRecord = {
     attempt,
     run,

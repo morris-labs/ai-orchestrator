@@ -29,7 +29,20 @@ export interface MemoryContainer {
   sessions: Map<string, { workDir: string; command: string }>;
   /** Text sent with `tmux send-keys`, per session. */
   sentKeys: Map<string, string[]>;
+  /** What `tmux capture-pane` prints, per session. Default: `CLAUDE_READY_SCREEN`. */
+  screens?: Map<string, string>;
 }
+
+/** A Claude Code screen with an empty input box, which takes a typed message. */
+export const CLAUDE_READY_SCREEN = [
+  "● Ready.",
+  "",
+  "─".repeat(60),
+  `❯${String.fromCharCode(0xa0)}`,
+  "─".repeat(60),
+  "  ? for shortcuts",
+  "",
+].join("\n");
 
 export interface MemoryCall {
   method: string;
@@ -231,6 +244,7 @@ export class MemoryDocker implements DockerClient {
       state: "created",
       sessions: new Map(),
       sentKeys: new Map(),
+      screens: new Map(),
     });
     return id;
   }
@@ -295,6 +309,13 @@ export class MemoryDocker implements DockerClient {
         stdout: [...c.sessions.keys()].map((s) => `${s}\n`).join(""),
         stderr: "",
       };
+    }
+    if (cmd[0] === "tmux" && cmd[1] === "capture-pane") {
+      const at = cmd.indexOf("-t");
+      const target = (cmd[at + 1] ?? "").replace(/^=/, "").replace(/:.*$/, "");
+      if (at < 0 || !c.sessions.has(target))
+        return { exitCode: 1, stdout: "", stderr: `can't find session: ${target}\n` };
+      return { exitCode: 0, stdout: c.screens?.get(target) ?? CLAUDE_READY_SCREEN, stderr: "" };
     }
     if (cmd[0] === "tmux" && cmd[1] === "send-keys") {
       // Like tmux: `send-keys -t` takes a pane, and a target without `:`

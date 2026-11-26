@@ -1,18 +1,25 @@
 // The entry point's pieces: arguments, environment, adapter selection, the
 // active-runs file, and a full start and stop.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
-import type { EngineEnv, Vendor } from "@aio/contracts";
+import { BUILD_SOCKET_ROUTES, type EngineEnv, type Vendor } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startActiveRunsWriter, writeActiveRuns } from "../../src/main/active-runs.js";
 import { MockAdapter } from "../../src/adapters/mock.js";
 import { FixOutputSchema, ReviewOutputSchema } from "../../src/core.js";
-import { createMockAdapters, parseMockVendors, selectAdapters } from "../../src/main/adapters.js";
+import {
+  createMockAdapters,
+  engineConfigDir,
+  parseMockVendors,
+  selectAdapters,
+} from "../../src/main/adapters.js";
 import { silentLogger } from "../../src/main/logger.js";
 import { checkEnv, parseArgs, startEngine } from "../../src/main/run.js";
 import { readPackageVersion } from "../../src/main/version.js";
 import { CONTAINER, PROJECT_ROOT, TOKEN, fakeRunManager } from "./fixtures.js";
 import { tempDir } from "../tmp.js";
+import { PLAN, send } from "../build-socket/helpers.js";
 
 let dir: string;
 beforeEach(() => {
@@ -95,6 +102,17 @@ describe("parseMockVendors", () => {
 
   it("rejects an unknown vendor", () => {
     expect(() => parseMockVendors("codex,gemini")).toThrow(/unknown vendor "gemini"/);
+  });
+});
+
+describe("engineConfigDir", () => {
+  it("reads the account folders from the server's mount by default", () => {
+    expect(engineConfigDir({})).toBe("/run/aio-config");
+    expect(engineConfigDir({ AIO_ENGINE_CONFIG_DIR: "" })).toBe("/run/aio-config");
+  });
+
+  it("reads them from AIO_ENGINE_CONFIG_DIR when it's set, so a test engine skips the live accounts", () => {
+    expect(engineConfigDir({ AIO_ENGINE_CONFIG_DIR: dir })).toBe(dir);
   });
 });
 
@@ -263,5 +281,107 @@ describe("startEngine with the real core", () => {
     } finally {
       await handle.close();
     }
+  });
+
+  it("runs the team chat bus on the loopback interface and stops it", async () => {
+    const env = {
+      AIO_ENGINE_TOKEN: TOKEN,
+      AIO_ENGINE_PORT: 0,
+      AIO_PROJECT_ROOT: dir,
+      AIO_CONTAINER: CONTAINER,
+      AIO_ENGINE_VERSION: readPackageVersion(),
+    } as unknown as EngineEnv;
+    const handle = await startEngine({
+      env,
+      token: TOKEN,
+      log: silentLogger,
+      stateDir: dir,
+      host: "127.0.0.1",
+      runner: { run: async () => ({ code: 1, stdout: "", stderr: "" }) },
+    });
+    const url = handle.team.url;
+    try {
+      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+      // The engine token isn't a bus token.
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      expect(res.status).toBe(401);
+    } finally {
+      await handle.close();
+    }
+    await expect(fetch(url, { method: "POST" })).rejects.toThrow();
+  });
+});
+
+describe("startEngine with a build socket", () => {
+  it("serves build requests for the project in AIO_PROJECT_ID and removes the socket at shutdown", async () => {
+    const socket = path.join(dir, "sock", "build.sock");
+    const env = {
+      AIO_ENGINE_TOKEN: TOKEN,
+      AIO_ENGINE_PORT: 0,
+      AIO_PROJECT_ROOT: dir,
+      AIO_CONTAINER: CONTAINER,
+      AIO_ENGINE_VERSION: readPackageVersion(),
+      AIO_PROJECT_ID: "proj-1",
+    } as unknown as EngineEnv;
+    const handle = await startEngine({
+      env,
+      token: TOKEN,
+      log: silentLogger,
+      stateDir: dir,
+      host: "127.0.0.1",
+      runs: fakeRunManager(),
+      buildSocket: socket,
+      runner: { run: async () => ({ code: 1, stdout: "", stderr: "" }) },
+    });
+    try {
+      const missing = await send(socket, "POST", BUILD_SOCKET_ROUTES.status, {
+        projectId: "proj-1",
+        boxId: null,
+        slug: "cart-total",
+      });
+      expect(missing.status).toBe(404);
+      const other = await send(socket, "POST", BUILD_SOCKET_ROUTES.start, {
+        projectId: "proj-2",
+        boxId: null,
+        slug: "cart-total",
+        plan: PLAN,
+      });
+      expect(other).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
+      expect(existsSync(path.join(dir, ".aio", "builds", "cart-total"))).toBe(false);
+    } finally {
+      await handle.close();
+    }
+    expect(existsSync(socket)).toBe(false);
+  });
+
+  it("starts without the socket when another process holds it", async () => {
+    const socket = path.join(dir, "build.sock");
+    const holder = net.createServer().listen(socket);
+    await new Promise((resolve) => holder.once("listening", resolve));
+    const warnings: string[] = [];
+    const log = { ...silentLogger, warn: (message: string) => warnings.push(message) };
+    const handle = await startEngine({
+      env: {
+        AIO_ENGINE_TOKEN: TOKEN,
+        AIO_ENGINE_PORT: 0,
+        AIO_PROJECT_ROOT: dir,
+        AIO_CONTAINER: CONTAINER,
+        AIO_ENGINE_VERSION: readPackageVersion(),
+      } as unknown as EngineEnv,
+      token: TOKEN,
+      log,
+      stateDir: dir,
+      host: "127.0.0.1",
+      runs: fakeRunManager(),
+      buildSocket: socket,
+      runner: { run: async () => ({ code: 1, stdout: "", stderr: "" }) },
+    });
+    await handle.close();
+    await new Promise((resolve) => holder.close(resolve));
+    expect(warnings.join("\n")).toMatch(/build socket/);
   });
 });

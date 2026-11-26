@@ -3,7 +3,9 @@
 // ceiling, or tells the run to pause until a window resets. The rules follow
 // "Usage tracking and rebalancing" in the review pipeline design: review and
 // disprove roles fall back to the next vendor, and the fixer stays with
-// Claude, so a Claude over its ceiling pauses the run.
+// Claude, so a Claude over its ceiling pauses the run. Build calls are exempt
+// from the ceilings: the scheduler grants them on the vendor they name, and
+// the engine waits for a vendor's reset when the vendor itself refuses.
 import { VENDOR_ROLES } from "@aio/contracts";
 import type {
   AioEvent,
@@ -59,6 +61,8 @@ export class VendorHealth {
 
   ingest(event: AioEvent): void {
     if (event.type !== "agent.finished") return;
+    // A build's own calls belong to no run, and no redirect ever applies to them.
+    if (event.runId === null) return;
     if (event.outcome === "error" || event.outcome === "timeout") {
       let set = this.failing.get(event.runId);
       if (!set) {
@@ -153,6 +157,10 @@ export class Scheduler {
 
   private compute(req: LeaseRequest, ceilings: Ceilings): LeaseResponse {
     const now = this.now();
+    // A build call, a review run's call inside a build included, is never
+    // paused or moved at a ceiling.
+    const runId = req.runId;
+    if (req.buildId !== undefined || runId === null) return this.grant(req, req.vendor, now);
     const usage = this.opts.usage;
     const requested = usage.isOver(req.vendor, ceilings);
     if (!requested.over) return this.grant(req, req.vendor, now);
@@ -177,13 +185,13 @@ export class Scheduler {
     // A vendor that is failing in this run would only fail the call; its
     // window resetting doesn't make it work, so its reset doesn't count.
     const usable = this.opts.usable ?? (() => true);
-    const candidates = capable.filter((v) => usable(req.runId, v));
+    const candidates = capable.filter((v) => usable(runId, v));
     const failing = capable.filter((v) => !candidates.includes(v));
     const resets: string[] = requested.resetAt ? [requested.resetAt] : [];
     for (const vendor of candidates) {
       const state = usage.isOver(vendor, ceilings);
       if (!state.over) {
-        this.announce(req, vendor);
+        this.announce(req, runId, vendor);
         return this.grant(req, vendor, now);
       }
       if (state.resetAt) resets.push(state.resetAt);
@@ -215,13 +223,13 @@ export class Scheduler {
   }
 
   /** Emits `role.reassigned` once per run, role, and move. */
-  private announce(req: LeaseRequest, to: Vendor): void {
+  private announce(req: LeaseRequest, runId: string, to: Vendor): void {
     if (req.role === "sweeper") return;
     const key = `${req.role}|${req.vendor}|${to}`;
-    let moves = this.announced.get(req.runId);
+    let moves = this.announced.get(runId);
     if (!moves) {
       moves = new Set();
-      this.announced.set(req.runId, moves);
+      this.announced.set(runId, moves);
       if (this.announced.size > ANNOUNCED_RUN_LIMIT) {
         const oldest = this.announced.keys().next().value;
         if (oldest !== undefined) this.announced.delete(oldest);
@@ -231,12 +239,12 @@ export class Scheduler {
     moves.add(key);
     this.opts.emit({
       type: "role.reassigned",
-      runId: req.runId,
+      runId,
       role: req.role,
       from: [req.vendor],
       to: [to],
       reason: "ceiling",
-      effectiveRound: this.opts.runRound(req.runId),
+      effectiveRound: this.opts.runRound(runId),
     });
   }
 }

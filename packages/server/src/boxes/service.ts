@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   ACCOUNT_DIR_ENV,
+  BUILD_SOCKET_ENV,
   BoxCreateSchema,
   BoxInputSchema,
   BoxUpdateSchema,
@@ -46,6 +47,12 @@ import { allLiveSessions, liveSessions } from "../docker/state.js";
 import { isContainerGone, type DockerClient, type ExecResult } from "../docker/types.js";
 import { detectPrimaryRepo, normalizeRoot } from "../projects/ids.js";
 import type { ProjectService } from "../projects/service.js";
+import {
+  deliverToSession,
+  type DeliveryRequest,
+  type DeliveryResult,
+  type DeliveryTiming,
+} from "./delivery.js";
 import { PLATFORMS, allocateHostKey, boxTmuxSession, sideSessionName } from "../records/box.js";
 import {
   accountDirFor,
@@ -113,6 +120,8 @@ export interface BoxServiceDeps {
   sessionGoneTimeoutMs?: number;
   /** Receives notes about the transcript snapshot. */
   log?: (message: string) => void;
+  /** How long message delivery waits; see `delivery.ts`. */
+  deliveryTiming?: DeliveryTiming;
 }
 
 /** How long a `starting` or `stopping` mark lasts without confirmation. */
@@ -163,6 +172,13 @@ export class BoxService {
   >();
   /** Boxes whose stop a person asked for, so the monitor does not call it unexpected. */
   private readonly requestedStops = new Map<string, number>();
+  /** Boxes whose session a create or start is starting. */
+  private readonly sessionStarts = new Set<string>();
+  /**
+   * Boxes stopped while their session was starting. A stop then finds no
+   * session to end, so the start ends the session once it is up.
+   */
+  private readonly stopsDuringStart = new Set<string>();
   private readonly converting = new Set<string>();
   /** Serializes the part of `create()` that picks a name and saves the record. */
   private readonly createLock = new KeyedMutex();
@@ -365,8 +381,10 @@ export class BoxService {
       const prepared = this.deps.prepareAccount(program, account.name);
       for (const problem of prepared.problems) this.deps.log?.(`${account.id}: ${problem}`);
     }
+    // The box ID tells the `aio-build` command which box asks for a build.
     const command = buildSessionCommand(program, args, {
       [ACCOUNT_DIR_ENV[program]]: account.containerDir,
+      [BUILD_SOCKET_ENV.boxId]: box.id,
     });
     const workDir = hostToContainer(boxWorkDir(box), this.hostOs);
     if (account?.claude) {
@@ -764,8 +782,10 @@ export class BoxService {
       );
       // Counted as starting before the lock opens, so a concurrent adoption
       // of the same conversation is refused, not run twice.
-      if (req.start)
+      if (req.start) {
         this.transitions.set(saved.id, { status: "starting", until: Date.now() + TRANSITION_MS });
+        this.sessionStarts.add(saved.id);
+      }
       return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
 
@@ -791,6 +811,7 @@ export class BoxService {
         args = platformArgs(box, project, box.platform, false, openingPrompt, this.hostOs);
       await this.startSession(box, box.platform, args);
     } catch (err) {
+      this.endSessionStart(box.id);
       this.transitions.delete(box.id);
       this.repos.boxes.delete(box.id);
       // Never take a worktree from under another record.
@@ -802,6 +823,7 @@ export class BoxService {
       this.publish(null, "stopped", box.id);
       throw err;
     }
+    const stopAsked = this.endSessionStart(box.id);
     // Re-read: an edit may have landed while the session started.
     const current = this.repos.boxes.get(box.id) ?? box;
     box = this.repos.boxes.put({
@@ -811,8 +833,27 @@ export class BoxService {
       launchedEffort: box.effort,
       updatedAt: this.now(),
     });
+    if (stopAsked) return this.stopStartedSession(box);
     this.publish(box, this.status(box));
     return box;
+  }
+
+  /** Ends a box's session start; returns whether a stop came in during it. */
+  private endSessionStart(id: string): boolean {
+    this.sessionStarts.delete(id);
+    return this.stopsDuringStart.delete(id);
+  }
+
+  /** Ends the session a start just brought up, for a stop that came in during the start. */
+  private async stopStartedSession(box: Box): Promise<Box> {
+    await this.killSession(box.container, boxTmuxSession(box));
+    const saved = this.repos.boxes.put({
+      ...(this.repos.boxes.get(box.id) ?? box),
+      wasRunning: false,
+      updatedAt: this.now(),
+    });
+    this.publish(saved, this.status(saved));
+    return saved;
   }
 
   /**
@@ -922,6 +963,7 @@ export class BoxService {
     }
 
     this.mark(box, "starting");
+    this.sessionStarts.add(box.id);
     try {
       if (first?.forkFrom && box.platform === "claude") {
         await this.copyForkTranscript(first.forkFrom, workDir);
@@ -930,10 +972,12 @@ export class BoxService {
         force: options.force ?? false,
       });
     } catch (err) {
+      this.endSessionStart(box.id);
       this.transitions.delete(box.id);
       this.publish(box, "stopped");
       throw err;
     }
+    const stopAsked = this.endSessionStart(box.id);
     // Re-read: Edit Box and the session watcher write this record while the
     // session starts. Only the fields a start owns change here.
     const current = this.repos.boxes.get(id) ?? box;
@@ -950,6 +994,7 @@ export class BoxService {
     if (next.launchedModel === undefined) delete next.launchedModel;
     if (next.launchedEffort === undefined) delete next.launchedEffort;
     box = this.repos.boxes.put(next);
+    if (stopAsked) return this.stopStartedSession(box);
     this.publish(box, this.status(box));
     return box;
   }
@@ -998,6 +1043,7 @@ export class BoxService {
   async stop(id: string): Promise<Box> {
     const box = this.get(id);
     this.requestedStops.set(id, Date.now());
+    if (this.sessionStarts.has(id)) this.stopsDuringStart.add(id);
     this.mark(box, "stopping");
     try {
       await this.syncRecordFromSession(id).catch(() => false);
@@ -1438,30 +1484,75 @@ export class BoxService {
     this.publish(box, this.status(box));
   }
 
-  /** `boxes.message`: types one message into the box's interactive session. */
+  /**
+   * `boxes.message`: types one message into the box's interactive session.
+   * Throws `conflict` when the box isn't running, or when its Claude Code
+   * session shows a dialog or holds unsent text, which typing would answer
+   * or join.
+   */
   async sendMessage(id: string, text: string): Promise<void> {
+    const result = await this.deliver(id, { text, confirm: false });
+    if (!result.delivered) throw new ApiError("conflict", `${id}: ${result.reason}`);
+  }
+
+  /**
+   * Types a message into the box's interactive session when the session can
+   * take it, and confirms it from the transcript; see `delivery.ts`. Returns
+   * `delivered: false` with the reason, and types nothing, when the box
+   * isn't running or the session can't take the message now.
+   */
+  async deliver(
+    id: string,
+    request: DeliveryRequest & { confirm?: boolean },
+  ): Promise<DeliveryResult> {
     const box = this.get(id);
-    if (!this.isRunning(box)) throw new ApiError("conflict", `${id} is not running.`);
+    if (!this.isRunning(box)) {
+      return { delivered: false, stopped: true, reason: `${id} is not running.` };
+    }
     // `send-keys` takes a pane target, and tmux resolves `=NAME` without a
     // `:` as a pane or window, so it fails. The trailing `:` names the
-    // session's current window and pane. `--` keeps a message that starts
-    // with `-` from being read as flags.
+    // session's current window and pane.
     const target = `=${boxTmuxSession(box)}:`;
-    for (const cmd of [
-      ["tmux", "send-keys", "-t", target, "-l", "--", text],
-      ["tmux", "send-keys", "-t", target, "Enter"],
-    ]) {
+    const tmux = async ([command, ...args]: string[]): Promise<string> => {
       const r = await this.deps.docker.exec(box.container, {
-        cmd,
+        cmd: ["tmux", command as string, "-t", target, ...args],
         user: this.env.user,
         timeoutMs: 10_000,
       });
-      if (r.exitCode !== 0)
+      if (r.exitCode !== 0) {
         throw new ApiError(
           "conflict",
-          `Could not send the message: ${(r.stderr || r.stdout).trim()}`,
+          `Could not reach the session: ${(r.stderr || r.stdout).trim()}`,
         );
-    }
+      }
+      return r.stdout;
+    };
+    const transcript = async (): Promise<string | null> => {
+      if (request.confirm === false) return null;
+      const file = await this.transcriptFile(box);
+      if (!file) return null;
+      try {
+        return await fs.promises.readFile(file, "utf8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+        throw err;
+      }
+    };
+    return deliverToSession(
+      { platform: box.platform, tmux, transcript },
+      request,
+      this.deps.deliveryTiming,
+    );
+  }
+
+  /** The transcript of the box's main Claude Code session, or `null` when it's unknown. */
+  private async transcriptFile(box: Box): Promise<string | null> {
+    if (box.platform !== "claude") return null;
+    const shared = box.container !== box.id;
+    const dir = sessionsDirFor(this.env, shared ? box.container : box.id);
+    const live = liveSessionName(await readSessionEntries(dir), shared ? box.sessionUuid : null);
+    const uuid = live?.sessionId || box.sessionUuid;
+    return uuid ? transcriptPath(this.env, boxWorkDir(box), uuid) : null;
   }
 
   // -------------------------------------------------------------------------

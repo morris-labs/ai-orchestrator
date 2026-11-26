@@ -161,26 +161,39 @@ describe("JobManager", () => {
   });
 
   it("drops the oldest finished jobs past the limit and stale ones past their age", async () => {
-    const jobs = new JobManager({ finishedLimit: 2, finishedTtlMs: 60_000 });
+    // A job finishes on a later tick, so each step waits for it, and the
+    // fake clock alone decides a job's age.
+    let now = Date.parse("2026-10-28T09:00:00.000Z");
+    const clock = () => new Date(now);
+    const done = (jobs: JobManager, id: string) =>
+      new Promise<void>((resolve) => jobs.attach(id)?.onDone(() => resolve()));
+    const quick = () => async () => ({ exitCode: 0 });
+
+    const jobs = new JobManager({ now: clock, finishedLimit: 2, finishedTtlMs: 60_000 });
     const ids: string[] = [];
     for (let i = 0; i < 3; i += 1) {
-      ids.push(
-        jobs.start({ kind: "image_build", command: `b${i}` }, async () => ({ exitCode: 0 })).id,
-      );
-      await new Promise((r) => setTimeout(r, 5));
+      const id = jobs.start({ kind: "image_build", command: `b${i}` }, quick()).id;
+      await done(jobs, id);
+      ids.push(id);
+      now += 1;
     }
-    const fourth = jobs.start({ kind: "image_build", command: "b3" }, async () => ({
-      exitCode: 0,
-    }));
+    const fourth = jobs.start({ kind: "image_build", command: "b3" }, quick());
     expect(jobs.get(ids[0]!)).toBeUndefined();
     expect(jobs.get(ids[1]!)?.status).toBe("finished");
+    expect(jobs.get(ids[2]!)?.status).toBe("finished");
     expect(jobs.get(fourth.id)).toBeDefined();
 
-    const aged = new JobManager({ finishedTtlMs: 0 });
-    const old = aged.start({ kind: "image_build", command: "old" }, async () => ({ exitCode: 0 }));
-    await new Promise((r) => setTimeout(r, 5));
-    aged.start({ kind: "image_build", command: "new" }, async () => ({ exitCode: 0 }));
+    const aged = new JobManager({ now: clock, finishedTtlMs: 60_000 });
+    const old = aged.start({ kind: "image_build", command: "old" }, quick());
+    await done(aged, old.id);
+    now += 60_000;
+    const kept = aged.start({ kind: "image_build", command: "kept" }, quick());
+    expect(aged.get(old.id)?.status).toBe("finished");
+    await done(aged, kept.id);
+    now += 1;
+    aged.start({ kind: "image_build", command: "new" }, quick());
     expect(aged.get(old.id)).toBeUndefined();
+    expect(aged.get(kept.id)?.status).toBe("finished");
   });
 
   it("stops running jobs at shutdown", async () => {

@@ -307,6 +307,28 @@ describe("the folder a call runs on", () => {
     expect(result.usage.map((sample) => sample.account)).toEqual(["codex/personal"]);
   });
 
+  it("reports a call's folder, and resumes in the folder a caller saved after a restart", async () => {
+    const root = tempDir("account-pin-");
+    const { cli, seen } = claudeCli(root);
+    const personal = claudeFolder(root, "personal", "personal@example.com");
+    const work = claudeFolder(root, "work", "work@example.com");
+    const first = await new ClaudeAdapter({ command: cli, accountDir: personal }).review(
+      request(root),
+    );
+    expect(first.accountFolder).toBe(personal);
+
+    // A new adapter, as after an engine restart, with the default moved.
+    const restarted = new ClaudeAdapter({ command: cli, accountDir: work });
+    const resumed = await restarted.continueReview({
+      ...request(root),
+      sessionId: "session-1",
+      sessionFolder: first.accountFolder ?? null,
+    });
+
+    expect(seenFor(seen, "claude").at(-1)).toBe(personal);
+    expect(resumed.accountFolder).toBe(personal);
+  });
+
   it("resumes a session started on the home folder there after a default appears", async () => {
     const root = tempDir("account-pin-");
     const { cli, seen } = claudeCli(root);

@@ -7,10 +7,14 @@ import {
   type AioEvent,
   type Box,
   type BoxView,
+  type BuildSummary,
+  type BuildUsage,
   type EventOf,
   type EventType,
   type GlobalSettings,
   type Job,
+  type Message,
+  type PmItem,
   type Project,
 } from "@aio/contracts";
 
@@ -79,6 +83,67 @@ export function makeBoxView(
     targetDirExists: true,
     ...rest,
   };
+}
+
+export function makeBuild(partial: Partial<BuildSummary> & { id: string }): BuildSummary {
+  const projectId = partial.projectId ?? "example-app-1a2b3c4d";
+  return {
+    slug: "add-export",
+    projectId,
+    container: projectContainerName(projectId),
+    status: "running",
+    step: "tasks",
+    boxId: null,
+    createdAt: T0,
+    updatedAt: T0,
+    ...partial,
+  };
+}
+
+/**
+ * A team chat message: by default, the Developer of task T1 asks the
+ * Project manager a question about T1.
+ */
+export function makeMessage(partial: Partial<Message> & { id: string; buildId: string }): Message {
+  return {
+    version: 1,
+    from: { kind: "seat", seat: "developer", taskId: "T1" },
+    to: { kind: "seat", seat: "project-manager", taskId: null },
+    routing: "by_type",
+    type: "question",
+    taskId: "T1",
+    milestone: null,
+    paths: [],
+    body: `Message ${partial.id}`,
+    createdAt: T0,
+    ...partial,
+  };
+}
+
+/**
+ * An item of a build's Project manager inbox: by default, escalation E1,
+ * which waits because its pointer didn't reach the session.
+ */
+export function makeInboxItem(partial: Partial<PmItem> & { id: string }): PmItem {
+  const ref = partial.ref ?? "E1";
+  return {
+    kind: "escalation",
+    ref,
+    summary: `Escalation ${ref} (attempt_cap, for the project manager): Task T1 failed 4 attempts.`,
+    file: `escalations/${ref}.json`,
+    path: `/work/example-app/.aio/builds/add-export/escalations/${ref}.json`,
+    needsAnswer: true,
+    createdAt: T0,
+    deliveredAt: null,
+    answeredAt: null,
+    ...partial,
+  };
+}
+
+/** A build's usage with no settled calls. */
+export function emptyBuildUsage(buildId: string): BuildUsage {
+  const zero = { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 };
+  return { buildId, total: zero, bySeat: [], byStep: [], bySpecialty: [] };
 }
 
 export function makeJob(partial: Partial<Job> & { id: string; kind: Job["kind"] }): Job {

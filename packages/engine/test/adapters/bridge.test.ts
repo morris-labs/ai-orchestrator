@@ -1,5 +1,6 @@
 // The bridge from CLI adapters to the core's VendorAdapter.
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   BridgedAdapter,
   METHOD_SCHEMAS,
@@ -39,12 +40,27 @@ describe("toCliRequest", () => {
     expect("sessionId" in req).toBe(false);
   });
 
+  it("passes the team chat attachment on, and none when the call has none", () => {
+    const team = { server: "aio_team", url: "http://127.0.0.1:1/mcp", token: "t", tools: ["x"] };
+    expect(toCliRequest("fix", { ...base, team }).team).toBe(team);
+    expect("team" in toCliRequest("fix", base)).toBe(false);
+  });
+
   it("keeps the session for a continuation and leaves out empty fields", () => {
     const req = toCliRequest("continueReview", { ...base, sessionId: "s-1" });
     expect(req.sessionId).toBe("s-1");
     expect(req.outputSchema).toBe(ReviewOutputSchema);
     expect(req).not.toHaveProperty("addDirs");
     expect(req).not.toHaveProperty("model");
+  });
+
+  it("uses the caller's answer shape in place of the method's", () => {
+    const schema = z.object({ summary: z.string() });
+    const json = { type: "object", properties: { summary: { type: "string" } } };
+    const req = toCliRequest("fix", { ...base, output: { schema, json } });
+    expect(req.outputSchema).toBe(schema);
+    expect(req.jsonSchema).toBe(json);
+    expect(req).not.toHaveProperty("output");
   });
 });
 

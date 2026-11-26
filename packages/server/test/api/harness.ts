@@ -2,13 +2,14 @@
 import { openDatabase } from "../../src/db/index.js";
 import fs from "node:fs";
 import { PassThrough, Duplex } from "node:stream";
-import type { EngineRouteKey, Job, RunState } from "@aio/contracts";
+import type { BuildState, BuildSummary, EngineRouteKey, Job, RunState } from "@aio/contracts";
 import type { ApiDeps, ApiEngine, ApiEngines } from "../../src/api/deps.js";
 import { ApiError } from "../../src/api/errors.js";
 import { createApiServer, type ApiServer } from "../../src/api/server.js";
 import type { EngineCallInput } from "../../src/events/engine-client.js";
 import { EventHub } from "../../src/events/hub.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
+import { SessionMessages } from "../../src/boxes/session-messages.js";
 import { JobManager } from "../../src/jobs/jobs.js";
 import type { ExecBackend, ExecRequest, ExecSession } from "../../src/terminals/exec.js";
 import type { DevServerProxy } from "../../src/proxy/proxy.js";
@@ -63,6 +64,53 @@ export class FakeEngines implements ApiEngines {
   }
 }
 
+/** The engine state of the harness's build `add-export`, with `status`. */
+export function harnessBuildState(status: BuildState["status"]): BuildState {
+  return {
+    version: 1,
+    id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+    slug: "add-export",
+    projectId: PROJECT_ID,
+    boxId: null,
+    container: CONTAINER,
+    title: "Add an export",
+    repoPath: "/work/example-app",
+    base: "0123456789abcdef0123456789abcdef01234567",
+    branch: "build/add-export",
+    worktree: "/work/example-app/.worktrees/build-add-export",
+    status,
+    step: "tasks",
+    tasks: [],
+    escalations: [],
+    placements: { singleVendor: null, plan: {}, live: [] },
+    createdAt: T1,
+    updatedAt: T1,
+  };
+}
+
+/** Engine build requests for the build `add-export`. */
+function buildHandlers(): Partial<Record<EngineRouteKey, (input: EngineCallInput) => unknown>> {
+  const known = (input: EngineCallInput) => {
+    if (input.params?.slug !== "add-export") throw new ApiError("not_found", "No such build.");
+  };
+  return {
+    "engine.builds.pause": (i) => (known(i), harnessBuildState("paused")),
+    "engine.builds.resume": (i) => (known(i), harnessBuildState("running")),
+    "engine.builds.cancel": (i) => (known(i), harnessBuildState("cancelled")),
+    "engine.builds.delete": (i) => (known(i), harnessBuildState("cancelled")),
+    "engine.builds.resolve": (i) => (known(i), harnessBuildState("running")),
+    "engine.builds.inbox": (i) => (
+      known(i),
+      {
+        buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+        slug: "add-export",
+        boxId: null,
+        items: [],
+      }
+    ),
+  };
+}
+
 /** The default engine: knows one run and echoes the rest. */
 export function defaultEngine(): FakeEngine {
   const runFor = (input: EngineCallInput): RunState => {
@@ -96,6 +144,40 @@ export function defaultEngine(): FakeEngine {
     { container: CONTAINER, projectId: PROJECT_ID },
     {
       "engine.runs.list": () => ({ runs: [runState] }),
+      "engine.builds.post": (input) => {
+        const post = input.body as { to: string; toTask?: string; type: string; body: string };
+        const message = {
+          version: 1,
+          id: "M1",
+          buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+          from: { kind: "owner" },
+          to: { kind: "seat", seat: post.to, taskId: post.toTask ?? null },
+          routing: "addressed",
+          type: post.type,
+          taskId: post.toTask ?? null,
+          milestone: null,
+          paths: [],
+          body: post.body,
+          createdAt: "2026-10-28T09:05:00.000Z",
+        };
+        const { buildId, to, taskId, milestone, body, createdAt } = message;
+        return {
+          route: "agent",
+          message,
+          decision: {
+            version: 1,
+            id: "D1",
+            buildId,
+            messageId: "M1",
+            to,
+            taskId,
+            milestone,
+            body,
+            createdAt,
+            planChange: null,
+          },
+        };
+      },
       "engine.repos.list": () => ({
         repos: [
           {
@@ -128,6 +210,7 @@ export function defaultEngine(): FakeEngine {
         status: "pending",
       }),
       "engine.runs.get": runFor,
+      ...buildHandlers(),
       "engine.runs.pause": (i) => ({
         ...runFor(i),
         status: "paused",
@@ -212,6 +295,19 @@ export async function createHarness(
   const engine = defaultEngine();
   const exec = new FakeExec();
   const runs = new RunMirror(db);
+  const builds: BuildSummary[] = [
+    {
+      id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      slug: "add-export",
+      projectId: PROJECT_ID,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      boxId: null,
+      createdAt: T1,
+      updatedAt: T1,
+    },
+  ];
   const notifications = [
     {
       notificationId: "n1",
@@ -267,6 +363,26 @@ export async function createHarness(
         },
       ],
     },
+    builds: {
+      list: (projectId) => builds.filter((b) => !projectId || b.projectId === projectId),
+      get: (buildId) => builds.find((b) => b.id === buildId),
+      usage: (buildId) =>
+        buildId === "01JB8Z5K3W6Q2V9X4T7R0M1N2Q"
+          ? {
+              buildId,
+              total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
+              bySeat: [],
+              byStep: [],
+              bySpecialty: [],
+            }
+          : undefined,
+      messages: (buildId) => (builds.some((b) => b.id === buildId) ? [] : undefined),
+      tasks: (buildId) => (builds.some((b) => b.id === buildId) ? [] : undefined),
+    },
+    sessionMessages: new SessionMessages({
+      deliver: (boxId, request) => core.boxes.deliver(boxId, request),
+      log: () => undefined,
+    }),
     notifications: {
       list: (q) => notifications.filter((n) => !q.unread || !n.read),
       markRead: (id) => {

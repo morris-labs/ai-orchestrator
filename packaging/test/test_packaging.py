@@ -217,6 +217,24 @@ class NfpmConfigTest(unittest.TestCase):
             self.assertTrue(os.access(path, os.X_OK), f"{path} not executable")
 
 
+class ServerAssetsTest(unittest.TestCase):
+    def test_server_package_ships_its_skills(self):
+        # scripts/build-deb.sh stages the server with `pnpm deploy`, which
+        # copies only the package.json `files` entries. The server installs
+        # the skills in assets/skills/ into Claude accounts at start.
+        package = json.loads((ROOT / "packages/server/package.json").read_text())
+        self.assertIn("assets", package["files"])
+        skills = ROOT / "packages/server/assets/skills"
+        self.assertTrue((skills / "aio-build/SKILL.md").is_file())
+        for skill in skills.iterdir():
+            text = (skill / "SKILL.md").read_text()
+            front = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+            self.assertIsNotNone(front, f"{skill.name}: SKILL.md has no front matter")
+            meta = yaml.safe_load(front.group(1))
+            self.assertEqual(meta["name"], skill.name)
+            self.assertTrue(meta.get("description"), f"{skill.name}: no description")
+
+
 class WorkflowTest(unittest.TestCase):
     def test_every_workflow_parses(self):
         files = sorted(WORKFLOWS.glob("*.yml"))
@@ -358,6 +376,18 @@ class ImageTest(unittest.TestCase):
         self.assertEqual(package["bin"]["aio-secret"], "./dist/secret-main.js")
         self.assertTrue((ROOT / "packages/engine/src/secret-main.ts").is_file())
 
+    def test_build_client_in_image(self):
+        # The image installs the aio-build command from the engine's own
+        # package.json bin, like aio-secret.
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        self.assertIn("bin['aio-build']", engine_step)
+        self.assertIn("> /usr/local/bin/aio-build", engine_step)
+        self.assertIn("chmod 0755 /usr/local/bin/aio-build", engine_step)
+        package = json.loads((ROOT / "packages/engine/package.json").read_text())
+        self.assertEqual(package["bin"]["aio-build"], "./dist/build-main.js")
+        self.assertTrue((ROOT / "packages/engine/src/build-main.ts").is_file())
+
     def test_engine_wrappers_check_their_bin_entries(self):
         # Runs the Dockerfile's bin lookups against a package without the
         # bins: each lookup must fail the build rather than write a wrapper
@@ -377,6 +407,7 @@ class ImageTest(unittest.TestCase):
         cases = {
             "engine_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-engine": "./missing.js"}}],
             "secret_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-secret": "./missing.js"}}],
+            "build_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-build": "./missing.js"}}],
         }
         with tempfile.TemporaryDirectory() as tmp:
             pkg = pathlib.Path(tmp)
@@ -389,7 +420,7 @@ class ImageTest(unittest.TestCase):
                     result = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0, f"{var}: {package}")
                     self.assertIn("bin", result.stderr)
-                good = "aio-engine" if var == "engine_bin" else "aio-secret"
+                good = {"engine_bin": "aio-engine", "secret_bin": "aio-secret", "build_bin": "aio-build"}[var]
                 (pkg / "package.json").write_text(json.dumps({"bin": {good: "./dist/main.js"}}))
                 subprocess.run(["sh", "-c", script], check=True, capture_output=True)
 
@@ -558,7 +589,7 @@ class DocsTest(unittest.TestCase):
         text = (ROOT / "docs/policy.md").read_text()
         example = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
         policy = yaml.safe_load(example)
-        allowed = {"version", "riskPaths", "rules", "tests", "lint", "environmentLimits", "excludePaths", "groupSizeLimit"}
+        allowed = {"version", "riskPaths", "rules", "setup", "tests", "typecheck", "lint", "environmentLimits", "excludePaths", "groupSizeLimit"}
         self.assertEqual(policy["version"], 1)
         self.assertLessEqual(set(policy), allowed)
         for rule in policy["rules"]:

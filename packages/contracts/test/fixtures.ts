@@ -6,6 +6,8 @@ export const T1 = "2026-10-28T09:05:00.000Z";
 export const UUID = "0b9f2a7e-4c1d-4e8a-9f3b-2d6c8e1a5b70";
 /** A ULID run id. */
 export const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
+/** A ULID build id. */
+export const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
 
 export const project = {
   id: "example-app-1a2b3c4d",
@@ -417,5 +419,75 @@ export const events = [
     type: "settings.changed",
     settings: parseConfig(settingsFile),
     changedKeys: ["notifications"],
+  },
+  {
+    ...ev(18),
+    type: "build.changed",
+    build: {
+      id: BUILD,
+      slug: "add-export",
+      projectId: project.id,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      createdAt: T0,
+      updatedAt: T1,
+    },
+  },
+  {
+    ...ev(19),
+    type: "build.task.changed",
+    buildId: BUILD,
+    taskId: "T1",
+    status: "done",
+    previousStatus: "running",
+  },
+  {
+    ...ev(20),
+    type: "message.sent",
+    message: {
+      version: 1,
+      id: "M1",
+      buildId: BUILD,
+      from: { kind: "seat", seat: "developer", taskId: "T1" },
+      to: { kind: "seat", seat: "project-manager", taskId: null },
+      routing: "by_type",
+      type: "question",
+      taskId: "T1",
+      milestone: null,
+      paths: [],
+      body: "Which currency does the cart total use?",
+      createdAt: T0,
+    },
+  },
+  {
+    ...ev(21),
+    type: "build.inbox",
+    buildId: BUILD,
+    slug: "cart-total",
+    boxId: "box-1",
+    item: {
+      id: "I1",
+      kind: "escalation",
+      ref: "E1",
+      summary: "Escalation E1 (attempt_cap, for the project manager): Task T1 failed 4 attempts.",
+      file: "escalations/E1.json",
+      path: "/work/shop/.aio/builds/cart-total/escalations/E1.json",
+      needsAnswer: true,
+      createdAt: T0,
+      deliveredAt: null,
+      answeredAt: null,
+    },
+  },
+  {
+    ...ev(22),
+    type: "build.seat.usage",
+    buildId: BUILD,
+    seat: "project-manager",
+    turns: 4,
+    tokensIn: 12000,
+    tokensOut: 800,
+    since: T0,
+    through: T1,
   },
 ];

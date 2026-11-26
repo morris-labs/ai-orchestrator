@@ -170,6 +170,35 @@ describe("base checkouts", () => {
   });
 });
 
+describe("a run read while it starts", () => {
+  it("shows the started run's progress, not a copy loaded from its files", async () => {
+    const repo = buildSampleRepo();
+    const runs = await createRunManager(deps(repo));
+    const id = runId();
+    // A reader that polls the run from the moment its files exist, as the
+    // build's review step and the server do.
+    let starting = true;
+    const reader = (async () => {
+      while (starting) {
+        await runs.get(id);
+        await new Promise((r) => setImmediate(r));
+      }
+    })();
+    await runs.start({
+      runId: id,
+      projectId: "sample",
+      depth: "thorough",
+      repoPath: repo,
+      base: "origin/main",
+      readOnly: true,
+    } as never);
+    starting = false;
+    await reader;
+    expect((await settle(runs, id)).status).toBe("finished");
+    await runs.close();
+  });
+});
+
 describe("engine shutdown", () => {
   it("leaves a run that waits for a lease running, and the next engine finishes it", async () => {
     const repo = buildSampleRepo();

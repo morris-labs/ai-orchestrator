@@ -53,8 +53,13 @@ async function create(repo: string, deps: EngineDeps, extra: Record<string, unkn
   );
 }
 
-async function until(check: () => boolean): Promise<void> {
-  for (let i = 0; i < 400 && !check(); i++) await new Promise((r) => setTimeout(r, 10));
+/**
+ * Waits until `check` holds. A run on a busy machine can take seconds to
+ * reach a state, so the limit only stops a run that never gets there.
+ */
+async function until(check: () => boolean, limitMs = 30_000): Promise<void> {
+  const deadline = Date.now() + limitMs;
+  while (!check() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
   expect(check()).toBe(true);
 }
 
@@ -89,6 +94,32 @@ describe("run controls", () => {
         .ofType("agent.started")
         .some((e) => e.round >= 2 && e.vendor === "claude" && e.role === "reviewer"),
     ).toBe(true);
+  });
+
+  it("names the vendor a role's calls ran on as the one that lost the role", async () => {
+    const repo = buildSampleRepo();
+    const ref: { run?: RunController } = {};
+    let first: { vendor: Vendor; role: Vendor } | null = null;
+    const { deps, events } = setup(new Scenario(), (req) => {
+      const role = ref.run?.state.roles.disprover;
+      if (req.role === "disprover" && first === null && role && req.vendor !== role) {
+        first = { vendor: req.vendor, role };
+        void ref.run?.assign("disprover", ["claude"]);
+      }
+    });
+    const run = await create(repo, deps, { profile: "offload", crossVendor: true });
+    ref.run = run;
+    await run.start();
+    await run.settled();
+    // A cross-vendor disprover call avoids the finding's vendor, so it can
+    // run on a vendor other than the role's own.
+    expect(first).not.toBeNull();
+    const manual = events
+      .ofType("role.reassigned")
+      .find((e) => e.role === "disprover" && e.reason === "manual");
+    // Every vendor the role's calls ran on this round lost it.
+    expect(manual).toMatchObject({ to: ["claude"] });
+    expect(manual?.from).toContain(first!.vendor);
   });
 
   it("starts with the request's roles over the profile's defaults", async () => {
@@ -378,6 +409,48 @@ describe("run controls", () => {
     await run.start();
     state = await run.settled();
     expect(state).toMatchObject({ status: "finished", stopReason: "clean" });
+  });
+
+  it("retries a run that a caller sees failed while its driver still winds down", async () => {
+    const repo = buildSampleRepo();
+    const scenario = new Scenario();
+    const adapters = scenario.adapters();
+    const codex = adapters.codex as VendorAdapter;
+    let failures = 2;
+    adapters.codex = {
+      ...codex,
+      vendor: "codex",
+      review: codex.review.bind(codex),
+      continueReview: codex.continueReview.bind(codex),
+      verify: codex.verify.bind(codex),
+      verifyBatch: codex.verifyBatch.bind(codex),
+      fix: codex.fix.bind(codex),
+      sweep: codex.sweep.bind(codex),
+      cluster: codex.cluster.bind(codex),
+      detectLimit: codex.detectLimit.bind(codex),
+      confirm: (req) =>
+        failures-- > 0 ? Promise.reject(new Error("CLI crashed")) : codex.confirm(req),
+    };
+    const { deps, events } = setup(scenario, undefined, adapters);
+    let run: RunController | null = null;
+    let retried: Promise<unknown> | null = null;
+    // A caller that polls the run's state can see it failed before the driver stops.
+    const emit = events.emit.bind(events);
+    events.emit = (draft) => {
+      const event = emit(draft);
+      if (draft.type === "run.changed" && draft.run.status === "failed" && !retried) {
+        retried = run!.retry({});
+        retried.catch(() => undefined);
+      }
+      return event;
+    };
+    run = await create(repo, deps);
+    await run.start();
+    await run.settled();
+    expect(retried).not.toBeNull();
+
+    await expect(retried).resolves.toBeDefined();
+    expect(await run.settled()).toMatchObject({ status: "finished", stopReason: "clean" });
   });
 
   it("finishes at once, without reviewer calls, when the range has no changes", async () => {

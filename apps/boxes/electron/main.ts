@@ -55,6 +55,7 @@ import {
   findTerminal,
   hostOsOf,
   isBoxNotification,
+  notificationTarget,
   macTerminalCommand,
   mayAskGsettings,
   needsLocalPage,
@@ -418,7 +419,13 @@ function watchEvents() {
           n,
           () => {
             showWindow();
-            if (ev.boxId) win?.webContents.send("aio:select-box", ev.boxId);
+            const target = notificationTarget(ev);
+            // The local server's stream sends this, so the build is on this machine.
+            if (target && "buildId" in target) {
+              win?.webContents.send("aio:select-build", target.buildId, "local");
+            } else if (target) {
+              win?.webContents.send("aio:select-box", target.boxId);
+            }
             void client()
               .call("notifications.read", { params: { notificationId: ev.notificationId } })
               .catch(() => undefined);
@@ -574,6 +581,26 @@ function registerIpc() {
         win?.webContents.send("aio:select-box", boxId, machineId, notificationId);
       },
       { urgent: urgent === true, releaseOnClose },
+    );
+  });
+  ipcMain.on("aio:notify-build", (e, n: unknown) => {
+    if (!fromApp(e) || !Notification.isSupported() || typeof n !== "object" || n === null) return;
+    const { title, body, buildId, machineId } = n as Record<string, unknown>;
+    if (
+      typeof title !== "string" ||
+      typeof body !== "string" ||
+      typeof buildId !== "string" ||
+      typeof machineId !== "string"
+    )
+      return;
+    showRetained(
+      shownNotifications,
+      new Notification({ title, body, urgency: "normal" }),
+      () => {
+        showWindow();
+        win?.webContents.send("aio:select-build", buildId, machineId);
+      },
+      { releaseOnClose },
     );
   });
   ipcMain.on("aio:quit", (e) => {

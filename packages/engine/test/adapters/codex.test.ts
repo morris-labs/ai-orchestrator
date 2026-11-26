@@ -49,6 +49,23 @@ describe("CodexStreamParser", () => {
     });
   });
 
+  it("reports only the change since the totals from before the call", () => {
+    const parser = new CodexStreamParser({ input: 5000, output: 300, cached: 1000 });
+    parser.push(
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 6200, cached_input_tokens: 1500, output_tokens: 380 },
+      }),
+    );
+    expect(parser.summary().tokens).toEqual({
+      input: 1200,
+      output: 80,
+      fresh: 700,
+      cacheWrite: 0,
+      cacheRead: 500,
+    });
+  });
+
   it("leaves out the token breakdown when a turn omits cached_input_tokens", () => {
     const parser = new CodexStreamParser();
     parser.push(
@@ -83,6 +100,33 @@ describe("CodexStreamParser", () => {
     expect(parser.summary().toolErrors).toEqual([
       "bash -lc 'python3 -c 1': bwrap: No permissions to create a new namespace",
       "bash -lc 'python3 -c 1': declined",
+    ]);
+  });
+});
+
+describe("CodexStreamParser MCP tool calls", () => {
+  it("collects failed MCP tool calls, such as a refused bus call, as tool errors", () => {
+    const parser = new CodexStreamParser();
+    const item = (status: string, extra: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "i",
+          type: "mcp_tool_call",
+          server: "aio_team",
+          tool: "send_message",
+          status,
+          ...extra,
+        },
+      });
+    parser.push(
+      item("failed", {
+        error: { message: "MCP tool call requires approval, but approval policy is never" },
+      }),
+    );
+    parser.push(item("completed", { result: { content: [] } }));
+    expect(parser.summary().toolErrors).toEqual([
+      "aio_team.send_message: MCP tool call requires approval, but approval policy is never",
     ]);
   });
 });
@@ -156,6 +200,38 @@ describe("CodexAdapter.buildArgs", () => {
     expect(adapter.buildArgs({ ...base, tools: "write" }, "/s")).not.toContain(
       "--dangerously-bypass-approvals-and-sandbox",
     );
+  });
+
+  it("attaches the team chat bus on a first call and on a resume, with approval and a token variable", () => {
+    const team = {
+      server: "aio_team",
+      url: "http://127.0.0.1:41000/mcp",
+      token: "secret-token-value",
+      tools: ["send_message"],
+    };
+    const overrides = [
+      "-c",
+      'mcp_servers.aio_team.url="http://127.0.0.1:41000/mcp"',
+      "-c",
+      'mcp_servers.aio_team.bearer_token_env_var="AIO_TEAM_TOKEN"',
+      "-c",
+      'mcp_servers.aio_team.default_tools_approval_mode="approve"',
+    ];
+    const first = adapter.buildArgs({ ...base, team }, "/s.json");
+    const resumed = adapter.buildArgs({ ...base, team, sessionId: "thread-1" }, "/s.json");
+    for (const args of [first, resumed]) {
+      expect(args.join(" ")).toContain(overrides.join(" "));
+      expect(args.at(-1)).toBe("-");
+      expect(args.join(" ")).not.toContain("secret-token-value");
+    }
+    expect(resumed.slice(0, 5)).toEqual([
+      "exec",
+      "--sandbox",
+      "danger-full-access",
+      "resume",
+      "thread-1",
+    ]);
+    expect(adapter.buildArgs(base, "/s.json").join(" ")).not.toContain("mcp_servers");
   });
 
   it("runs a read-only call with a scratch directory in that directory", () => {

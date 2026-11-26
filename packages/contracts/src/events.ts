@@ -21,9 +21,19 @@
 //
 // Event payloads use `null`, not absent fields, for missing values.
 import { z } from "zod";
+import { SeatPlacementSchema } from "./placements.js";
 import { ModelTierSchema } from "./tiers.js";
 import { CountSchema, IsoDateTimeSchema, PortSchema, RunIdSchema, VendorSchema } from "./common.js";
 import { FindingSchema, FindingHistoryVerdictSchema } from "./findings.js";
+import {
+  BuildIdSchema,
+  buildChangedFields,
+  buildTaskChangedFields,
+  callOwnerFields,
+} from "./build-events.js";
+import { messageSentFields } from "./messages.js";
+import { buildInboxFields } from "./pm-inbox.js";
+import { buildSeatUsageFields } from "./pm-usage.js";
 import {
   LeaseRequestFrameSchema,
   LeaseResponseFrameSchema,
@@ -139,6 +149,8 @@ export const NotificationKindSchema = z.enum([
   "ready_to_push",
   "box_ended",
   "round_summary",
+  "usage_alert",
+  "direct_message",
 ]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 
@@ -150,6 +162,12 @@ export const NotificationSchema = z.object({
   body: z.string(),
   runId: RunIdSchema.nullable(),
   boxId: z.string().min(1).nullable(),
+  /**
+   * The build the notification is about, such as a build past its usage
+   * estimate. Absent, not `null`, for every other notification, so stored
+   * notifications from before builds stay valid.
+   */
+  buildId: BuildIdSchema.optional(),
   severity: z.enum(["info", "warning", "error"]),
   read: z.boolean(),
 });
@@ -181,7 +199,8 @@ export type EngineInfo = z.infer<typeof EngineInfoSchema>;
 // Events
 
 const agentFields = {
-  runId: RunIdSchema,
+  /** The review run or the build the call belongs to; see `callOwnerFields`. */
+  ...callOwnerFields,
   /** Unique per agent call within the run. */
   agentId: z.string().min(1),
   /** The lease the call runs under. */
@@ -198,6 +217,8 @@ const agentFields = {
   tierReason: z.string().optional(),
   /** The reasoning effort the call asked for. Absent means the vendor's own default. */
   effort: z.string().min(1).optional(),
+  /** The build seat's placement that the call ran on. Absent for a review run's calls. */
+  placement: SeatPlacementSchema.optional(),
 };
 
 export const AgentStartedEventSchema = z.object({
@@ -288,6 +309,8 @@ export const LeaseSettledEventSchema = z.object({
   ...base,
   type: z.literal("lease.settled"),
   ...LeaseSettlementSchema.shape,
+  /** The build seat's placement that the call ran on. Absent for a review run's calls. */
+  placement: SeatPlacementSchema.optional(),
 });
 
 export const RunChangedEventSchema = z.object({
@@ -362,6 +385,39 @@ export const SettingsChangedEventSchema = z.object({
   changedKeys: z.array(z.string().min(1)),
 });
 
+export const BuildChangedEventSchema = z.object({
+  ...base,
+  type: z.literal("build.changed"),
+  ...buildChangedFields,
+});
+
+export const BuildTaskChangedEventSchema = z.object({
+  ...base,
+  type: z.literal("build.task.changed"),
+  ...buildTaskChangedFields,
+});
+
+/** A team chat message that the engine saved; see `messages.ts`. */
+export const MessageSentEventSchema = z.object({
+  ...base,
+  type: z.literal("message.sent"),
+  ...messageSentFields,
+});
+
+/** An item that a build added to the Project manager's inbox; see `pm-inbox.ts`. */
+export const BuildInboxEventSchema = z.object({
+  ...base,
+  type: z.literal("build.inbox"),
+  ...buildInboxFields,
+});
+
+/** What a tokens only seat, the Project manager, spent; see `pm-usage.ts`. */
+export const BuildSeatUsageEventSchema = z.object({
+  ...base,
+  type: z.literal("build.seat.usage"),
+  ...buildSeatUsageFields,
+});
+
 export const EventSchema = z.discriminatedUnion("type", [
   AgentStartedEventSchema,
   AgentFinishedEventSchema,
@@ -380,6 +436,11 @@ export const EventSchema = z.discriminatedUnion("type", [
   TerminalEndedEventSchema,
   NotificationEventSchema,
   SettingsChangedEventSchema,
+  BuildChangedEventSchema,
+  BuildTaskChangedEventSchema,
+  MessageSentEventSchema,
+  BuildInboxEventSchema,
+  BuildSeatUsageEventSchema,
 ]);
 export type AioEvent = z.infer<typeof EventSchema>;
 export type EventType = AioEvent["type"];

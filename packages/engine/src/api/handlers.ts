@@ -2,6 +2,7 @@
 // decides which handlers must exist; `server.ts` validates inputs and outputs.
 import type { EngineRouteKey, EngineRoutes, Listener } from "@aio/contracts";
 import type { z } from "zod";
+import type { BuildManager } from "../build/manager.js";
 import { EngineError, type RunManager } from "./core-interface.js";
 import type { RepoInfo, RepoRefs } from "./repos.js";
 
@@ -44,6 +45,7 @@ export interface HealthInfo {
 
 export interface HandlerDeps {
   runs: RunManager;
+  builds: BuildManager;
   repos: { list(): Promise<RepoInfo[]>; refs(repo: string, fetch?: boolean): Promise<RepoRefs> };
   ports: { list(): Listener[] };
   health: () => HealthInfo;
@@ -94,6 +96,23 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
     },
     "engine.findings.waive": (i) => runs.waive(run(i), param(i, "findingId"), i.body.reason),
     "engine.usage.samples": async (i) => ({ samples: await runs.usageSamples(i.query) }),
+    "engine.builds.create": (i) => deps.builds.start(i.body),
+    "engine.builds.get": async (i) => {
+      const slug = param(i, "slug");
+      return found(slug, deps.builds.get(slug), "build");
+    },
+    "engine.builds.pause": (i) => deps.builds.pause(param(i, "slug"), i.body.reason),
+    "engine.builds.resume": (i) => deps.builds.resume(param(i, "slug"), i.body.reason),
+    "engine.builds.planning.pause": (i) => deps.builds.pausePlanning(param(i, "slug")),
+    "engine.builds.planning.resume": (i) => deps.builds.resumePlanning(param(i, "slug")),
+    "engine.builds.cancel": (i) => deps.builds.cancel(param(i, "slug")),
+    "engine.builds.delete": (i) => deps.builds.delete(param(i, "slug")),
+    "engine.builds.resolve": (i) => deps.builds.resolve(param(i, "slug"), i.body),
+    "engine.builds.post": (i) => deps.builds.post(param(i, "slug"), i.body),
+    "engine.builds.inbox": (i) =>
+      deps.builds.inbox(param(i, "slug"), { all: i.query.all ?? false }),
+    "engine.builds.inbox.delivered": (i) =>
+      deps.builds.delivered(param(i, "slug"), param(i, "itemId")),
     "engine.ports": () => ({ listeners: deps.ports.list() }),
   };
 }

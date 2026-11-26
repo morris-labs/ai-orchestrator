@@ -381,33 +381,34 @@ describe("GUI to hub to node to box", () => {
     const via = (rest: string) => `/api/v1/machines/${machineId}/proxy/${rest}`;
     const dir = path.join(node.home, "work");
     fs.mkdirSync(dir);
+    // Waits for a job through every hop. The limit only stops a hung job.
+    const finished = async (res: Response) => {
+      expect(res.status, await res.clone().text()).toBeLessThan(300);
+      const job = (await res.json()) as Json;
+      if (typeof job.id !== "string") return;
+      let state: Json = job;
+      const deadline = Date.now() + 15_000;
+      while (state.status !== "finished" && state.status !== "failed" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        state = await (await fetchProxy(via(`jobs/${job.id}`))).json();
+      }
+      expect(state).toMatchObject({ status: "finished", exitCode: 0 });
+    };
+    // The box shows in the list while its job still starts it, so a stop
+    // before the job ends would race the job's own start.
     const created = await fetchProxy(via("boxes"), {
       method: "POST",
       body: JSON.stringify({ targetDir: dir, layout: "root" }),
     });
     expect(created.status).toBe(202);
-    let list: Json = { boxes: [] };
-    for (let i = 0; i < 100 && list.boxes.length === 0; i++) {
-      list = await (await fetchProxy(via("boxes"))).json();
-      if (list.boxes.length === 0) await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await finished(created);
+    const list = (await (await fetchProxy(via("boxes"))).json()) as Json;
     expect(list.boxes).toHaveLength(1);
     const boxId = list.boxes[0].box.id as string;
     const nodeBoxes = await node.api("GET", "/api/v1/boxes");
     expect(nodeBoxes.json.boxes[0].box.id).toBe(boxId);
 
     // The box starts running; stop it and start it again through every hop.
-    const finished = async (res: Response) => {
-      expect(res.status, await res.clone().text()).toBeLessThan(300);
-      const job = (await res.json()) as Json;
-      if (typeof job.id !== "string") return;
-      let state: Json = job;
-      for (let i = 0; i < 200 && state.status !== "finished" && state.status !== "failed"; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        state = await (await fetchProxy(via(`jobs/${job.id}`))).json();
-      }
-      expect(state).toMatchObject({ status: "finished", exitCode: 0 });
-    };
     await finished(await fetchProxy(via(`boxes/${boxId}/stop`), { method: "POST" }));
     await finished(await fetchProxy(via(`boxes/${boxId}/start`), { method: "POST" }));
 

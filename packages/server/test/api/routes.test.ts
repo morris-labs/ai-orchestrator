@@ -384,6 +384,68 @@ const cases: Case[] = [
     body: { vendor: "codex" },
     status: 200,
   },
+  {
+    key: "builds.list",
+    method: "GET",
+    url: `${V1}/builds?projectId=example-app-1a2b3c4d`,
+    status: 200,
+  },
+  {
+    key: "builds.get",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q`,
+    status: 200,
+  },
+  ...(["pause", "resume", "cancel"] as const).map((action) => ({
+    key: `builds.${action}` as const,
+    method: "POST" as const,
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/${action}`,
+    status: 200,
+  })),
+  {
+    key: "builds.delete",
+    method: "DELETE",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q`,
+    status: 200,
+  },
+  {
+    key: "builds.resolve",
+    method: "POST",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/resolve`,
+    body: { escalation: "E1", action: "retry", by: "owner" },
+    status: 200,
+  },
+  {
+    key: "builds.usage",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/usage`,
+    status: 200,
+  },
+  {
+    key: "builds.messages",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/messages`,
+    status: 200,
+  },
+  {
+    key: "builds.post",
+    method: "POST",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/posts`,
+    body: { to: "developer", toTask: "T1", body: "Keep the total in whole dollars." },
+    status: 201,
+  },
+  {
+    key: "builds.tasks",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/tasks`,
+    status: 200,
+  },
+  {
+    key: "builds.inbox",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/inbox?all=true`,
+    status: 200,
+  },
   { key: "notifications.list", method: "GET", url: `${V1}/notifications?unread=true`, status: 200 },
   { key: "notifications.read", method: "POST", url: `${V1}/notifications/n1/read`, status: 200 },
   { key: "machines.list", method: "GET", url: `${V1}/machines`, status: 200 },
@@ -701,7 +763,9 @@ describe("review routes", () => {
     const sent = h.engine.calls.find((c) => c.key === "engine.runs.create");
     expect((sent?.input.body as { runId: string }).runId).toBe(run.id);
     expect(h.runs.get(run.id)?.status).toBe("pending");
-    expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
+    // The request goes out through delivery, which waits while the session shows a dialog.
+    await h.deps.sessionMessages.idle?.();
+    expect(h.core.calls).toContain(`deliver:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
   });
 
   it("passes other projects' token samples into a preview", async () => {
@@ -841,6 +905,64 @@ describe("review routes", () => {
       expect(rogue.calls.map((c) => c.key)).toEqual(["engine.runs.get"]);
       expect(h.runs.get(FOREIGN)).toBeUndefined();
     });
+  });
+});
+
+describe("owner posts", () => {
+  const url = `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/posts`;
+  const body = { to: "developer", toTask: "T1", body: "Keep the total in whole dollars." };
+
+  it("forwards a post to the engine of the build's project, by the build's slug", async () => {
+    const res = await h.server.app.inject({ method: "POST", url, headers: AUTH, payload: body });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({
+      message: { from: { kind: "owner" }, body: body.body },
+      decision: { id: "D1" },
+    });
+    expect(h.engine.calls.at(-1)).toEqual({
+      key: "engine.builds.post",
+      input: { params: { slug: "add-export" }, body: { ...body, type: "note" } },
+    });
+  });
+
+  it("refuses a post to a build the server hasn't seen, or one addressed to the owner", async () => {
+    const unknown = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Z/posts`,
+      headers: AUTH,
+      payload: body,
+    });
+    expect(unknown.statusCode).toBe(404);
+    const toOwner = await h.server.app.inject({
+      method: "POST",
+      url,
+      headers: AUTH,
+      payload: { ...body, to: "owner" },
+    });
+    expect(toOwner.statusCode).toBe(400);
+    expect(h.engine.calls.some((c) => c.key === "engine.builds.post")).toBe(false);
+  });
+});
+
+describe("the Project manager inbox", () => {
+  it("reads a build's inbox from the engine that runs it, by the build's slug", async () => {
+    const res = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/inbox?all=true`,
+      headers: AUTH,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ slug: "add-export", items: [] });
+    expect(h.engine.calls.at(-1)).toEqual({
+      key: "engine.builds.inbox",
+      input: { params: { slug: "add-export" }, query: { all: "true" } },
+    });
+    const unknown = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Z/inbox`,
+      headers: AUTH,
+    });
+    expect(unknown.statusCode).toBe(404);
   });
 });
 

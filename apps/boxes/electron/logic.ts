@@ -172,12 +172,33 @@ export function trayIconBitmap(size: number, state: "running" | "idle" | "offlin
 // ---------------------------------------------------------------------------
 // Notifications and the review app
 
-/** Notification kinds about boxes; the review app shows the run kinds. */
-export const BOX_NOTIFICATION_KINDS: readonly NotificationKind[] = ["box_ended"];
+/**
+ * Notification kinds this app raises on the desktop; the review app shows
+ * the run kinds. Usage watcher alerts are account-wide, so only this app
+ * raises them, and both apps show them in the window. An agent's direct
+ * message to the owner belongs to a build, which this app shows.
+ */
+export const BOX_NOTIFICATION_KINDS: readonly NotificationKind[] = [
+  "box_ended",
+  "usage_alert",
+  "direct_message",
+];
 
 /** True for notifications this app shows: box kinds, or any notification about a box but no run. */
 export function isBoxNotification(n: Pick<Notification, "kind" | "runId" | "boxId">): boolean {
   return BOX_NOTIFICATION_KINDS.includes(n.kind) || (n.runId === null && n.boxId !== null);
+}
+
+/**
+ * What a click on a desktop notification opens: the build it is about, the
+ * box it is about, or nothing.
+ */
+export function notificationTarget(
+  n: Pick<Notification, "boxId" | "buildId">,
+): { buildId: string } | { boxId: string } | null {
+  if (n.buildId) return { buildId: n.buildId };
+  if (n.boxId) return { boxId: n.boxId };
+  return null;
 }
 
 /**

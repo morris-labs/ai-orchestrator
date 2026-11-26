@@ -5,6 +5,7 @@ import {
   BoxSchema,
   BoxViewSchema,
   DEFAULT_PROMPT_TEMPLATES,
+  boxWorkDir,
   SECRETS_PROMPT_HINT,
   expandTemplate,
   withSecretsHint,
@@ -59,7 +60,7 @@ describe("create", () => {
     expect([session, workDir]).toEqual(["aio-agent-app", dir]);
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["Quick look", dir]);
     expect(command).toBe(
-      `env CLAUDE_CONFIG_DIR='${path.join(h.home, ".ai-orchestrator", "accounts", "claude", "fixture")}' claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
+      `env CLAUDE_CONFIG_DIR='${path.join(h.home, ".ai-orchestrator", "accounts", "claude", "fixture")}' AIO_BOX_ID='${box.id}' claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
         `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '--session-id' '${box.sessionUuid}' '--' '${prompt.replace(/'/g, `'\\''`)}'`,
     );
     expect(h.core.boxes.status(box)).toBe("running");
@@ -392,6 +393,63 @@ describe("create", () => {
     await starting;
   });
 
+  /** Holds the next session start until the test releases it. */
+  function holdNextStart(h: Harness) {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const atStart = new Promise<void>((resolve) => (reached = resolve));
+    let blocked = false;
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[0] === START_SESSION_PATH && !blocked) {
+        blocked = true;
+        reached();
+        await held;
+      }
+    };
+    return { atStart, release };
+  }
+
+  it("leaves a box stopped when a stop arrives while its create still starts it", async () => {
+    const h = makeHarness();
+    const hold = holdNextStart(h);
+    const creating = h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    await hold.atStart;
+    const [box] = h.core.boxes.list();
+    // The stop ends before the session exists, as a stop request can.
+    await h.core.boxes.stop(box!.id);
+    hold.release();
+    const created = await creating;
+    expect(h.core.boxes.isRunning(created)).toBe(false);
+    expect(created.wasRunning).toBe(false);
+    expect(h.core.boxes.status(created)).toBe("stopped");
+    // Nothing is left behind: the box starts again.
+    await h.core.boxes.start(box!.id);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(box!.id))).toBe(true);
+  });
+
+  it("leaves a box stopped when a stop arrives while a start is under way", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      start: false,
+    });
+    const hold = holdNextStart(h);
+    const starting = h.core.boxes.start(box.id);
+    await hold.atStart;
+    await h.core.boxes.stop(box.id);
+    hold.release();
+    const started = await starting;
+    expect(h.core.boxes.isRunning(started)).toBe(false);
+    expect(started.wasRunning).toBe(false);
+    // A later stop and start work as usual.
+    await h.core.boxes.start(box.id);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(box.id))).toBe(true);
+    await h.core.boxes.stop(box.id);
+    expect(h.core.boxes.get(box.id).wasRunning).toBe(false);
+  });
+
   it("forks into a worktree by copying the source transcript first", async () => {
     const h = makeHarness();
     const repo = initRepo(h.dir("repo"));
@@ -557,7 +615,7 @@ describe("start, stop, restart", () => {
     const box = await stopped(h, { platform: "codex" });
     await h.core.boxes.start(box.id);
     expect(lastCommand(h)).toBe(
-      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' codex 'resume' '--last' '--dangerously-bypass-approvals-and-sandbox'`,
+      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' AIO_BOX_ID='${box.id}' codex 'resume' '--last' '--dangerously-bypass-approvals-and-sandbox'`,
     );
   });
 
@@ -973,7 +1031,7 @@ describe("edit, platform, side sessions, messages", () => {
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
     await h.core.boxes.setPlatform(box.id, "copilot", true);
     expect(lastCommand(h)).toBe(
-      `env COPILOT_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "copilot", "fixture")}' copilot '--remote' '--continue' '--allow-all-tools'`,
+      `env COPILOT_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "copilot", "fixture")}' AIO_BOX_ID='${box.id}' copilot '--remote' '--continue' '--allow-all-tools'`,
     );
   });
 
@@ -984,7 +1042,7 @@ describe("edit, platform, side sessions, messages", () => {
       session: `${box.session}-codex`,
     });
     expect(lastCommand(h)).toBe(
-      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' codex 'remote-control' '--no-daemon'`,
+      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' AIO_BOX_ID='${box.id}' codex 'remote-control' '--no-daemon'`,
     );
     expect(h.core.boxes.view(h.core.boxes.get(box.id)).sideSessions).toEqual(["codex"]);
     await expect(h.core.boxes.startSideSession(box.id, "codex")).rejects.toMatchObject({
@@ -1025,6 +1083,168 @@ describe("edit, platform, side sessions, messages", () => {
       "--",
       "Hold edits, please.",
     ]);
+  });
+
+  describe("delivery into a box's session", () => {
+    const DIALOG = [
+      "─".repeat(60),
+      " Do you want to proceed?",
+      " ❯ 1. Yes",
+      "   2. No, and tell Claude what to do differently (esc)",
+    ].join("\n");
+
+    /** A running Claude box whose transcript records each line typed with an Enter after it. */
+    async function claudeBox(h: Harness, record = true) {
+      const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+      const uuid = box.sessionUuid as string;
+      const file = h.transcript(boxWorkDir(box), uuid, [{ type: "summary" }]);
+      let typed = "";
+      h.docker.beforeExec = async (_container, options) => {
+        const [tool, command, , , ...rest] = options.cmd;
+        if (tool !== "tmux" || command !== "send-keys") return;
+        if (rest[0] === "-l") typed = rest.at(-1) ?? "";
+        else if (rest[0] === "Enter" && record) {
+          const line = { type: "user", message: { role: "user", content: typed }, sessionId: uuid };
+          fs.appendFileSync(file, `${JSON.stringify(line)}\n`);
+        }
+      };
+      return { box, file };
+    }
+
+    const keys = (h: Harness, box: Box) =>
+      h.docker.containers.get(box.container)?.sentKeys.get(box.session) ?? [];
+
+    it("types into an empty input box, sends Enter on its own, and confirms from the transcript", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      const result = await h.core.boxes.deliver(box.id, {
+        text: "[aio-build cart I1] Read /work/x.md",
+        marker: "[aio-build cart I1]",
+      });
+      expect(result).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual(["-l [aio-build cart I1] Read /work/x.md", "Enter"]);
+      const captures = h.docker
+        .callsOf("exec")
+        .map((c) => (c.args[1] as { cmd: string[] }).cmd)
+        .filter((cmd) => cmd[1] === "capture-pane");
+      expect(captures).toEqual([["tmux", "capture-pane", "-t", `=${box.session}:`, "-p", "-e"]]);
+    });
+
+    it("types into an empty input box that shows a dim prompt suggestion", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      const rule = "─".repeat(60);
+      h.docker.containers
+        .get(box.container)
+        ?.screens?.set(box.session, `${rule}\n❯\u00a0\u001b[2mlet it run\u001b[0m\n${rule}\n`);
+      const result = await h.core.boxes.deliver(box.id, {
+        text: "[aio-build cart I1] Read /work/x.md",
+        marker: "[aio-build cart I1]",
+      });
+      expect(result).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual(["-l [aio-build cart I1] Read /work/x.md", "Enter"]);
+    });
+
+    it("types nothing into a session that shows a dialog or holds unsent text", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      const screens = h.docker.containers.get(box.container)?.screens;
+      screens?.set(box.session, DIALOG);
+      const result = await h.core.boxes.deliver(box.id, { text: "Hold edits." });
+      expect(result).toMatchObject({ delivered: false, reason: expect.stringContaining("dialog") });
+      await expect(h.core.boxes.sendMessage(box.id, "Hold edits.")).rejects.toMatchObject({
+        code: "conflict",
+      });
+      screens?.set(box.session, `${"─".repeat(60)}\n❯ half a thought\n${"─".repeat(60)}\n`);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toMatchObject({
+        delivered: false,
+        reason: expect.stringContaining("nobody sent"),
+      });
+      expect(keys(h, box)).toEqual([]);
+    });
+
+    it("leaves a stopped box alone, without an error", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      await h.core.boxes.stop(box.id);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toMatchObject({
+        delivered: false,
+        reason: expect.stringContaining("not running"),
+      });
+    });
+
+    it("doesn't type a message twice when the transcript holds its marker", async () => {
+      const h = makeHarness();
+      const { box, file } = await claudeBox(h);
+      fs.appendFileSync(
+        file,
+        `${JSON.stringify({ type: "user", message: { content: "[aio-build cart I1] Read x" } })}\n`,
+      );
+      expect(
+        await h.core.boxes.deliver(box.id, {
+          text: "[aio-build cart I1] Read x",
+          marker: "[aio-build cart I1]",
+        }),
+      ).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual([]);
+    });
+
+    it("types a message without a marker again when the transcript holds the same text", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toEqual({
+        delivered: true,
+        confirmed: true,
+      });
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toEqual({
+        delivered: true,
+        confirmed: true,
+      });
+      expect(keys(h, box)).toEqual(["-l Hold edits.", "Enter", "-l Hold edits.", "Enter"]);
+    });
+
+    it("confirms a repeated message without a marker only from a new transcript entry", async () => {
+      const h = makeHarness();
+      const { box, file } = await claudeBox(h, false);
+      fs.appendFileSync(
+        file,
+        `${JSON.stringify({ type: "user", message: { content: "Hold edits." } })}\n`,
+      );
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toEqual({
+        delivered: true,
+        confirmed: false,
+      });
+      expect(keys(h, box)).toEqual(["-l Hold edits.", "Enter"]);
+    });
+
+    it("reports a message that the transcript doesn't show as unconfirmed", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h, false);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hello" })).toEqual({
+        delivered: true,
+        confirmed: false,
+      });
+    });
+
+    it("types nothing into a Codex or Copilot session, whose screen the server can't read", async () => {
+      const h = makeHarness();
+      for (const platform of ["codex", "copilot"] as const) {
+        const box = await h.core.boxes.create({
+          targetDir: h.dir(`app-${platform}`),
+          layout: "root",
+          platform,
+        });
+        expect(await h.core.boxes.deliver(box.id, { text: "Hello" })).toMatchObject({
+          delivered: false,
+          unsupported: true,
+          reason: expect.stringContaining(platform),
+        });
+        await expect(h.core.boxes.sendMessage(box.id, "Hold edits.")).rejects.toMatchObject({
+          code: "conflict",
+        });
+        expect(keys(h, box)).toEqual([]);
+      }
+    });
   });
 
   it("builds proxy links from the engine's listeners", async () => {

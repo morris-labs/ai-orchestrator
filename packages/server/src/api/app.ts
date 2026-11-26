@@ -22,6 +22,8 @@ import { assertDevEnginesAllowed, withDevEngines } from "../events/dev-engines.j
 import { EngineSupervisor } from "../events/engines.js";
 import { EventHub } from "../events/hub.js";
 import { LateSink } from "../events/late-sink.js";
+import { BoxBuildLink } from "../events/build-control.js";
+import { BuildMirror } from "../events/build-mirror.js";
 import { RunMirror } from "../events/run-mirror.js";
 import { JobManager } from "../jobs/jobs.js";
 import { NodeProcessRunner, type ProcessRunner } from "../jobs/process.js";
@@ -36,7 +38,8 @@ import { MultiHost, type MachineRole, type MultiHostOptions } from "../hub/multi
 import { UpgradeService, imageBuildFailureMessage, saveImageBuildLog } from "../setup/upgrade.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
-import { RELEASE_EDITS_MESSAGE } from "./handlers.js";
+import { HOLD_EDITS_MESSAGE, RELEASE_EDITS_MESSAGE } from "./handlers.js";
+import { SessionMessages } from "../boxes/session-messages.js";
 import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
 import { currentPlatform, serviceManagerOf, type HostPlatform } from "../platform/host.js";
 import { installServerService, serverServiceInstalled } from "../service/index.js";
@@ -44,6 +47,8 @@ import { installService, serviceInstalled } from "../systemd/service.js";
 import { DockerExecBackend, type ExecBackend } from "../terminals/exec.js";
 import { UsageService } from "../usage/usage-service.js";
 import { UsageStore } from "../usage/usage-store.js";
+import { UsageWatcher, projectManagerBoxes, projectManagerMessage } from "../usage/watcher.js";
+import { PmDelivery } from "../events/pm-delivery.js";
 
 export interface AppOptions {
   home: string;
@@ -188,6 +193,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   sink.attach(hub);
   runs = new RunMirror(core.db);
   const runMirror = runs;
+  const buildMirror = new BuildMirror(core.db);
   const usageStore = new UsageStore(core.db);
   const usage = new UsageService({ store: usageStore, settings, emit: (e) => hub.emit(e) });
   const vendorHealth = new VendorHealth();
@@ -200,14 +206,37 @@ export async function startApp(options: AppOptions): Promise<App> {
     runRound: (runId) => runMirror.round(runId),
     emit: (e) => hub.emit(e),
   });
+  // The hold and release edits messages wait while a session shows a dialog.
+  const sessionMessages = new SessionMessages({
+    deliver: (boxId, request) => core.boxes.deliver(boxId, request),
+    log,
+  });
   const notifier = new Notifier({
     db: core.db,
     settings,
     emit: (e) => hub.emit(e),
-    releaseBox: (boxId) => {
-      void core.boxes.message(boxId, RELEASE_EDITS_MESSAGE).catch((err: unknown) => {
-        log(`Telling ${boxId} that the run ended failed: ${(err as Error).message}`);
-      });
+    builds: buildMirror,
+    releaseBox: (boxId) =>
+      sessionMessages.send(boxId, RELEASE_EDITS_MESSAGE, { withdraws: HOLD_EDITS_MESSAGE }),
+  });
+  // Escalations, digests, and usage alerts reach the Project manager's session.
+  const pmDelivery = new PmDelivery({
+    builds: buildMirror,
+    engines: { get: (container) => engineSupervisor?.get(container) },
+    boxes: { deliver: (boxId, request) => core.boxes.deliver(boxId, request) },
+    log,
+  });
+  const usageWatcher = new UsageWatcher({
+    store: usageStore,
+    settings,
+    build: (buildId) => buildMirror.get(buildId),
+    alerted: (buildId) => notifier.hasBuildAlert(buildId),
+    alert: (alert) => {
+      notifier.usageAlert(alert);
+      const text = projectManagerMessage(alert);
+      for (const boxId of projectManagerBoxes(alert, buildMirror.list())) {
+        pmDelivery.alert(boxId, text);
+      }
     },
   });
   let apiServer: ApiServer | null = null;
@@ -451,9 +480,16 @@ export async function startApp(options: AppOptions): Promise<App> {
   const brokerTimer = setInterval(syncBroker, BROKER_SYNC_INTERVAL_MS);
   brokerTimer.unref();
 
+  // A box stop pauses the box's build, and its start resumes it.
+  const boxBuilds = new BoxBuildLink({ builds: buildMirror, engines, log });
   hub.subscribe((event: AioEvent) => {
     runMirror.ingest(event);
+    buildMirror.ingest(event);
+    boxBuilds.ingest(event);
+    pmDelivery.ingest(event);
     usage.ingest(event);
+    // After the usage service, which records the sample or settlement it reads.
+    usageWatcher.ingest(event);
     vendorHealth.ingest(event);
     notifier.ingest(event);
     if (event.type === "box.changed") syncTunnels();
@@ -510,6 +546,15 @@ export async function startApp(options: AppOptions): Promise<App> {
         ),
       samples: (q) => usageStore.samples(q),
     },
+    builds: {
+      list: (projectId) => buildMirror.list(projectId),
+      get: (buildId) => buildMirror.get(buildId),
+      usage: (buildId) =>
+        buildMirror.get(buildId) === undefined ? undefined : usageStore.buildUsage(buildId),
+      messages: (buildId) => buildMirror.messages(buildId),
+      tasks: (buildId) => buildMirror.tasks(buildId),
+    },
+    sessionMessages,
     notifications: notifier,
     secrets,
     setup,
@@ -584,6 +629,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   }
 
   engines.start();
+  pmDelivery.start();
   // Keep the API available while building so apps can show progress and starts wait.
   void core.image
     .status()
@@ -618,6 +664,9 @@ export async function startApp(options: AppOptions): Promise<App> {
       await tunnels.stopAll();
       closing = true;
       clearInterval(brokerTimer);
+      boxBuilds.close();
+      pmDelivery.close();
+      sessionMessages.close();
       await brokerSync;
       await broker.closeAll();
       await core.close?.();

@@ -19,7 +19,15 @@ export const EngineStateSchema = z.object({
   /** Which loop drives the run: the pre-push rounds, or the post-push loop after a push. */
   phase: z.enum(["pre-push", "post-push"]).default("pre-push"),
   /** Post-push: the pull request title and draft flag from the push request. */
-  push: z.object({ title: z.string().nullable(), draft: z.boolean() }).nullable().default(null),
+  push: z
+    .object({
+      title: z.string().nullable(),
+      draft: z.boolean(),
+      /** The pull request description, from a build's release ready step. */
+      body: z.string().optional(),
+    })
+    .nullable()
+    .default(null),
   /** Counters for ids that must stay unique across a resume. */
   counters: z
     .object({
@@ -78,6 +86,12 @@ export const EngineStateSchema = z.object({
   preFixSha: z.string().nullable().default(null),
   /** Vendors the engine called as the fixer this round; the confirmer must be another. */
   roundFixers: z.array(VendorSchema).default([]),
+  /**
+   * The vendors each role's calls ran on this round. A cross-vendor call
+   * avoids its finding's vendor, so it can run on a vendor other than the
+   * role's own; a reassignment names these as the vendors that lost the role.
+   */
+  roundRoleVendors: z.record(z.string(), z.array(VendorSchema)).default({}),
   /**
    * At the `standard` depth, the commit the current round's review diff starts
    * from: where the last round's fixes began. `null` reviews the whole range.

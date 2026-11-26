@@ -94,6 +94,23 @@ import {
   UsageSampleSchema,
   UsageWindowSchema,
 } from "./events.js";
+import {
+  BuildListQuerySchema,
+  BuildListSchema,
+  BuildSummarySchema,
+  BuildTaskListSchema,
+  BuildUsageSchema,
+} from "./build-events.js";
+import { BuildMessageListSchema } from "./messages.js";
+import { BuildPlanningControlAnswerSchema } from "./build-planning.js";
+import { OwnerPostAnswerSchema, OwnerPostSchema } from "./owner-posts.js";
+import { PmInboxSchema, PmItemSchema } from "./pm-inbox.js";
+import {
+  BuildControlSchema,
+  BuildCreateSchema,
+  BuildStateSchema,
+  EscalationResolveSchema,
+} from "./builds.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
@@ -1820,6 +1837,103 @@ export const serverRoutes = {
     response: z.object({ vendors: z.array(VendorUsageSchema), cleared: z.number().int() }),
   }),
 
+  // Builds
+  "builds.list": http({
+    method: "GET",
+    path: `${V1}/builds`,
+    summary:
+      "List the builds the server has seen, newest first, across every project or for one project.",
+    query: BuildListQuerySchema,
+    response: BuildListSchema,
+  }),
+  "builds.get": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId`,
+    summary: "Get a build's latest state. Returns not_found for a build the server hasn't seen.",
+    response: BuildSummarySchema,
+  }),
+  "builds.pause": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/pause`,
+    summary: "Pause a running build after its current agent call or gate, and its review run.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "builds.resume": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/resume`,
+    summary:
+      "Resume a paused or cancelled build. Refused with conflict while another build holds the build's box.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "builds.cancel": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/cancel`,
+    summary:
+      "Cancel a build: stop every agent, keep its branch and worktree, and write a closing record. The build stays resumable until you delete it.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "builds.delete": http({
+    method: "DELETE",
+    path: `${V1}/builds/:buildId`,
+    summary:
+      "Delete a finished, failed, or cancelled build's branch and worktree. The build's record stays.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "builds.resolve": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/resolve`,
+    summary:
+      "Resolve an escalation of a build and resume what it paused. Send `by: owner` for the owner's answer. Refused with conflict when the build's container isn't running.",
+    body: EscalationResolveSchema,
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "builds.usage": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/usage`,
+    summary:
+      "A build's settled usage, in total, by seat, and by step. Returns not_found for a build the server hasn't seen.",
+    response: BuildUsageSchema,
+  }),
+  "builds.messages": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/messages`,
+    summary:
+      "A build's team chat messages, oldest first. Returns not_found for a build the server hasn't seen.",
+    response: BuildMessageListSchema,
+  }),
+  "builds.tasks": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/tasks`,
+    summary:
+      "A build's tasks with their state and milestone, by task id. Returns not_found for a build the server hasn't seen.",
+    response: BuildTaskListSchema,
+  }),
+  "builds.post": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/posts`,
+    summary:
+      "Post as the owner to one agent of a build. Only that agent runs; the engine records the post as a decision on its task.",
+    body: OwnerPostSchema,
+    response: OwnerPostAnswerSchema,
+    status: 201,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
+
+  "builds.inbox": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/inbox`,
+    summary:
+      "The items that wait in a build's Project manager inbox: escalations and digests whose pointer didn't reach the box's session, and escalations without an answer. `all=true` lists every item.",
+    query: z.object({ all: QueryBooleanSchema.optional() }),
+    response: PmInboxSchema,
+    errors: ["not_found", "conflict"],
+  }),
+
   // Machines (multi-host)
   "machines.list": http({
     method: "GET",
@@ -1944,6 +2058,106 @@ export const engineRoutes = {
       "List the engine's usage samples from its run files.",
     ),
   ),
+  "engine.builds.create": http({
+    method: "POST",
+    path: `${V1}/builds`,
+    summary: "Start a build from a build plan.",
+    body: BuildCreateSchema,
+    response: BuildStateSchema,
+    status: 201,
+    errors: ["conflict"],
+  }),
+  "engine.builds.get": http({
+    method: "GET",
+    path: `${V1}/builds/:slug`,
+    summary: "Get a build's state.",
+    response: BuildStateSchema,
+    errors: ["not_found"],
+  }),
+  "engine.builds.pause": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/pause`,
+    summary:
+      "Pause a build after its current agent call or gate, and its review run. `reason: box` marks a pause for a box stop.",
+    body: BuildControlSchema,
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.resume": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/resume`,
+    summary:
+      "Resume a paused or cancelled build, and its review run. `reason: box` resumes only a build that a box stop paused.",
+    body: BuildControlSchema,
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "engine.builds.planning.pause": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/planning/pause`,
+    summary:
+      "Hold a build in planning for its box's stop: its seat calls and meeting turns wait until a resume. A call under way finishes.",
+    response: BuildPlanningControlAnswerSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.planning.resume": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/planning/resume`,
+    summary: "Let a build in planning go on after its box starts.",
+    response: BuildPlanningControlAnswerSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.cancel": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/cancel`,
+    summary:
+      "Cancel a build: stop every agent and its review run, keep its branch and worktree, and have the Scribe write a closing record.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.delete": http({
+    method: "DELETE",
+    path: `${V1}/builds/:slug`,
+    summary:
+      "Delete a finished, failed, or cancelled build's branch and worktree. Its directory, with the closing record, stays.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.resolve": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/resolve`,
+    summary:
+      "Resolve an escalation of a build and resume what it paused, or mark it for the owner.",
+    body: EscalationResolveSchema,
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.post": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/posts`,
+    summary: "Post as the owner to one agent of a build, and record the post as a decision.",
+    body: OwnerPostSchema,
+    response: OwnerPostAnswerSchema,
+    status: 201,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "engine.builds.inbox": http({
+    method: "GET",
+    path: `${V1}/builds/:slug/inbox`,
+    summary:
+      "The items that wait in a build's Project manager inbox, oldest first. `all=true` lists every item.",
+    query: z.object({ all: QueryBooleanSchema.optional() }),
+    response: PmInboxSchema,
+    errors: ["not_found"],
+  }),
+  "engine.builds.inbox.delivered": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/inbox/:itemId/delivered`,
+    summary:
+      "Mark an inbox item's pointer as delivered to the Project manager's session. Marking it again keeps the first time.",
+    response: PmItemSchema,
+    errors: ["not_found"],
+  }),
   "engine.ports": http({
     method: "GET",
     path: `${V1}/ports`,
@@ -1967,8 +2181,14 @@ export const engineRoutes = {
   },
 } as const;
 
-/** Every route, keyed by name. Engine keys start with `engine.`. */
-export const routes = { ...serverRoutes, ...engineRoutes } as const;
+/**
+ * Every route, keyed by name. Engine keys start with `engine.`. The type is
+ * written out because the inferred one is too large for declaration output.
+ */
+export const routes: typeof serverRoutes & typeof engineRoutes = {
+  ...serverRoutes,
+  ...engineRoutes,
+};
 
 export type ServerRoutes = typeof serverRoutes;
 export type EngineRoutes = typeof engineRoutes;

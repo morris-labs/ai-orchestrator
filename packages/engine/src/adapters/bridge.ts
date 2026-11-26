@@ -67,7 +67,9 @@ export function toCliRequest(
   method: AdapterMethod,
   request: AdapterRequest | ContinueRequest,
 ): CliRequest<unknown> {
-  const schema = METHOD_SCHEMAS[method];
+  const schema = request.output
+    ? { output: request.output.schema, json: request.output.json }
+    : METHOD_SCHEMAS[method];
   const addDirs = [
     ...(request.extraDirs ?? []),
     ...(request.scratchDir ? [request.scratchDir] : []),
@@ -82,7 +84,9 @@ export function toCliRequest(
     ...(request.model !== undefined ? { model: request.model } : {}),
     ...(request.effort !== undefined ? { effort: request.effort } : {}),
     ...(request.signal !== undefined ? { signal: request.signal } : {}),
-    ...("sessionId" in request ? { sessionId: request.sessionId } : {}),
+    ...(request.sessionId !== undefined ? { sessionId: request.sessionId } : {}),
+    ...(request.sessionFolder !== undefined ? { sessionFolder: request.sessionFolder } : {}),
+    ...(request.team !== undefined ? { team: request.team } : {}),
     outputSchema: schema.output,
     jsonSchema: schema.json,
   };
@@ -104,6 +108,7 @@ export function toCoreResult<T>(
     output: result.output as T,
     model: result.model ?? requestedModel ?? vendor,
     sessionId: result.sessionId,
+    ...(result.accountFolder !== undefined ? { accountFolder: result.accountFolder } : {}),
     tokens: {
       in: result.tokens.input,
       out: result.tokens.output,

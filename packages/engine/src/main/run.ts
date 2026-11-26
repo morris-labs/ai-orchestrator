@@ -3,7 +3,10 @@
 // order, and stops them in reverse on a signal.
 import {
   BROKER_ENV,
+  BUILD_SOCKET_ENV,
+  BUILD_SOCKET_PATH,
   DEFAULT_ENGINE_STATE_DIR,
+  ENGINE_ACCOUNT_KEY_FILE,
   ENGINE_ENV,
   EngineEnvSchema,
   type EngineEnv,
@@ -19,14 +22,26 @@ import { EngineLeaseBroker } from "../events/leases.js";
 import { scanListeners } from "../ports/scan.js";
 import { PortWatcher } from "../ports/watcher.js";
 import type { AdapterSet } from "../core.js";
+import { createBuildManager, type BuildManager } from "../build/manager.js";
+import { serveBuildSocket, type BuildSocketServer } from "../build-socket/server.js";
 import { createRunManager } from "../state/manager.js";
+import { TeamBus } from "../team/index.js";
 import { ChildRegistry, setChildRegistry } from "../process/children.js";
 import { setCredentialSource } from "../process/credentials.js";
 import { looksLikeCredential } from "../process/env.js";
 import { BrokerClient } from "../secrets/broker-client.js";
 import { moveSecretsOutOfEnviron } from "./environ.js";
 import { startActiveRunsWriter } from "./active-runs.js";
-import { MOCK_SCRIPT_ENV, MOCK_VENDORS_ENV, selectAdapters } from "./adapters.js";
+import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
+import { accountSkillDirs } from "../build/specialties/index.js";
+import { accountKeySource } from "../run/token-history.js";
+import {
+  CONFIG_DIR_ENV,
+  MOCK_SCRIPT_ENV,
+  MOCK_VENDORS_ENV,
+  engineConfigDir,
+  selectAdapters,
+} from "./adapters.js";
 import { LOG_LEVELS, createLogger, isLogLevel } from "./logger.js";
 import { loadEngineToken } from "./token.js";
 import { readPackageVersion } from "./version.js";
@@ -52,6 +67,11 @@ Environment:
   ${ENGINE_ENV.container}      The container's name. Required.
   ${ENGINE_ENV.engineVersion}  The engine version the server expects. Required.
   ${ENGINE_ENV.stateDir}       Where to write active-runs. Default: ${DEFAULT_ENGINE_STATE_DIR}.
+  ${ENGINE_ENV.projectId}      The project's ID. The build socket refuses other projects.
+  ${BUILD_SOCKET_ENV.socket}    The build socket, which serves only build requests.
+                         Default: ${BUILD_SOCKET_PATH}.
+  ${CONFIG_DIR_ENV}  The folder that holds account-dirs.json and the account key.
+                         Default: the server's mount. Tests set it to a folder of their own.
   ${MOCK_VENDORS_ENV}    Vendors whose calls mock scripts answer: 1 for all, or a list
                          such as codex,copilot.
   ${MOCK_SCRIPT_ENV}     With ${MOCK_VENDORS_ENV}: a JSON file of responses per vendor.
@@ -105,6 +125,9 @@ export interface EngineHandle {
   hub: EventHub;
   leases: EngineLeaseBroker;
   runs: RunManager;
+  builds: BuildManager;
+  /** The team chat bus that build agents reach on the loopback interface. */
+  team: TeamBus;
   ports: PortWatcher;
   /** The address the API listens on. */
   address: { host: string; port: number };
@@ -124,7 +147,25 @@ export interface StartOptions {
   adapters?: AdapterSet;
   /** Replaces the core, for tests. */
   runs?: RunManager;
+  /** Replaces the build manager, for tests. */
+  builds?: BuildManager;
+  /**
+   * Where to open the build socket for the `aio-build` command. Absent
+   * means no socket. When the socket can't be opened, the engine logs a
+   * warning and starts without it.
+   */
+  buildSocket?: string;
+  /**
+   * The secret names the project gives builds, from the secrets broker.
+   * Absent means preflight doesn't check a build plan's secrets.
+   */
+  secretNames?: () => Promise<string[]>;
   portIntervalMs?: number;
+  /**
+   * The folder whose `account-dirs.json` names the account skills folders
+   * for builds. Default: the build manager's own default, the server's mount.
+   */
+  configDir?: string;
 }
 
 /** Starts every part of the engine and returns a handle that stops them. */
@@ -145,6 +186,10 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
 
   const hub = new EventHub({ source: `engine:${container}` });
   const leases = new EngineLeaseBroker({ log });
+  // Agents run in this container, so the bus listens on the loopback
+  // interface only, apart from the API's port.
+  const team = new TeamBus({ log, version: engineVersion });
+  await team.start();
   let runs: RunManager;
   try {
     runs =
@@ -159,6 +204,34 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
       }));
   } catch (err) {
     leases.close();
+    await team.close();
+    throw err;
+  }
+  let builds: BuildManager;
+  try {
+    builds =
+      options.builds ??
+      (await createBuildManager({
+        projectRoot,
+        container,
+        events: hub,
+        leases,
+        adapters: options.adapters ?? {},
+        log,
+        team,
+        reviews: runs,
+        ...(options.secretNames ? { secretNames: options.secretNames } : {}),
+        ...(options.configDir !== undefined
+          ? {
+              skillDirs: () =>
+                accountSkillDirs(readAccountDirs(accountDirsFileIn(options.configDir as string))),
+            }
+          : {}),
+      }));
+  } catch (err) {
+    await runs.close?.();
+    leases.close();
+    await team.close();
     throw err;
   }
   const repos = new RepoService({ projectRoot, runner, log });
@@ -181,6 +254,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
     leases,
     log,
     runs,
+    builds,
     repos,
     ports,
   });
@@ -190,33 +264,67 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
   } catch (err) {
     await ports.stop();
     leases.close();
+    await team.close();
     throw err;
+  }
+  let buildSocket: BuildSocketServer | null = null;
+  if (options.buildSocket !== undefined) {
+    try {
+      buildSocket = await serveBuildSocket({
+        path: options.buildSocket,
+        builds,
+        projectId: env[ENGINE_ENV.projectId] ?? null,
+        log,
+      });
+    } catch (err) {
+      log.warn("The engine runs without its build socket", {
+        path: options.buildSocket,
+        reason: (err as Error).message,
+      });
+    }
   }
   const bound = app.server.address();
   const boundPort = typeof bound === "object" && bound ? bound.port : port;
   log.info("The engine is listening", { host, port: boundPort, engineVersion, container });
 
   const stateDir = options.stateDir ?? env[ENGINE_ENV.stateDir];
-  const activeRuns = startActiveRunsWriter(stateDir, () => runs.activeRunCount(), log);
+  const activeRuns = startActiveRunsWriter(
+    stateDir,
+    () => runs.activeRunCount() + builds.activeCount(),
+    log,
+  );
 
   let closing: Promise<void> | null = null;
   const close = () => {
     closing ??= (async () => {
       log.info("The engine is shutting down");
       await ports.stop();
+      await buildSocket?.close();
       await app.close();
       // The runs learn that the engine is stopping before the broker rejects
       // their pending lease requests, so those runs stay `running` and the
       // next engine continues them instead of finding them failed.
       const runsClosed = runs.close?.();
+      const buildsClosed = builds.close();
       leases.close();
-      await runsClosed;
+      await Promise.all([runsClosed, buildsClosed]);
+      await team.close();
       activeRuns.stop(0);
       log.info("The engine stopped");
     })();
     return closing;
   };
-  return { app, hub, leases, runs, ports, address: { host, port: boundPort }, close };
+  return {
+    app,
+    hub,
+    leases,
+    runs,
+    builds,
+    team,
+    ports,
+    address: { host, port: boundPort },
+    close,
+  };
 }
 
 /**
@@ -292,20 +400,33 @@ export async function main(
 
   // The server sets the broker socket on every container it creates; an
   // engine started by hand without it gives children no brokered credentials.
+  let broker: BrokerClient | null = null;
   if (env[BROKER_ENV.socket] || env[BROKER_ENV.url]) {
     try {
-      setCredentialSource(new BrokerClient({ env }), (message, fields) =>
-        log.warn(message, fields),
-      );
+      broker = new BrokerClient({ env });
+      setCredentialSource(broker, (message, fields) => log.warn(message, fields));
     } catch (err) {
       log.warn("The engine can't use the secrets broker", { reason: (err as Error).message });
     }
   }
 
+  const secrets = broker;
+  // Every reader of the server's mount goes through one folder, so a test
+  // engine that names its own reads no live account folder.
+  const configDir = engineConfigDir(env);
+  accountKeySource.file = join(configDir, ENGINE_ACCOUNT_KEY_FILE);
   let handle: EngineHandle;
   try {
     const { adapters } = await selectAdapters(env, log);
-    handle = await startEngine({ env: checked.env, token: loaded.token, log, adapters });
+    handle = await startEngine({
+      env: checked.env,
+      token: loaded.token,
+      log,
+      adapters,
+      buildSocket: env[BUILD_SOCKET_ENV.socket] || BUILD_SOCKET_PATH,
+      configDir,
+      ...(secrets ? { secretNames: () => secrets.names() } : {}),
+    });
   } catch (err) {
     log.error("The engine failed to start", { error: String(err) });
     return 1;

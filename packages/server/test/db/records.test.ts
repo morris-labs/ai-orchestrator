@@ -181,6 +181,22 @@ describe("SettingsService", () => {
     expect(published).toHaveLength(2);
   });
 
+  it("patches each usage watch window on its own and goes back to the defaults with null", () => {
+    const { settings } = setup();
+    expect(settings.get().usageWatch).toBeUndefined();
+    settings.patch({ usageWatch: { "7d": { ceilingAt: 0.9 }, buildEstimateFactor: 3 } });
+    expect(settings.get().usageWatch).toEqual({
+      "5h": { ceilingAt: 0.8, jump: 0.15, jumpMinutes: 10 },
+      "7d": { ceilingAt: 0.9, jump: 0.05, jumpMinutes: 60 },
+      buildEstimateFactor: 3,
+    });
+    settings.patch({ usageWatch: { "5h": { jump: 0.2 } } });
+    expect(settings.get().usageWatch?.["5h"].jump).toBe(0.2);
+    expect(settings.get().usageWatch?.["7d"].ceilingAt).toBe(0.9);
+    settings.patch({ usageWatch: null });
+    expect(settings.get().usageWatch).toBeUndefined();
+  });
+
   it("patches vendor defaults per field and clears with null", () => {
     const { settings } = setup();
     expect(settings.get().vendorDefaults).toEqual({

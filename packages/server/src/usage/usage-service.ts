@@ -100,6 +100,10 @@ export class UsageService {
         {
           leaseId: event.leaseId,
           runId: event.runId,
+          ...(event.buildId === undefined ? {} : { buildId: event.buildId }),
+          ...(event.seat === undefined ? {} : { seat: event.seat }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(event.specialties === undefined ? {} : { specialties: event.specialties }),
           vendor: event.vendor,
           role: event.role,
           tokens: event.tokens,
@@ -108,6 +112,10 @@ export class UsageService {
         },
         event.time,
       );
+      return;
+    }
+    if (event.type === "build.seat.usage") {
+      this.opts.store.recordSeatUsage(event);
       return;
     }
     if (event.type !== "usage.sample") return;

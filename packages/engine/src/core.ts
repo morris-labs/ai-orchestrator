@@ -89,6 +89,42 @@ export interface AdapterRequest {
   effort?: Effort;
   /** Aborted when the run is cancelled. The adapter must stop the CLI. */
   signal?: AbortSignal;
+  /**
+   * The answer's shape, for a caller whose answer isn't the method's own,
+   * such as a build role's report. Absent, the method's schema applies.
+   */
+  output?: AdapterOutput;
+  /** The team chat bus to attach to this call only; see `src/team/`. */
+  team?: TeamAttachment;
+  /** A session of the same vendor to resume. Absent, the call starts a fresh session. */
+  sessionId?: string;
+  /**
+   * The account folder that holds `sessionId`, as an earlier result's
+   * `accountFolder` reported it; `null` for the CLI's home folder.
+   */
+  sessionFolder?: string | null;
+}
+
+/**
+ * The team chat MCP server for one agent call. The adapter attaches it on
+ * this call only, a resume included, and passes `token` as the bearer
+ * token without putting it on the command line.
+ */
+export interface TeamAttachment {
+  /** The MCP server name the CLI registers, which prefixes the tool names. */
+  server: string;
+  /** The streamable HTTP endpoint, such as `http://127.0.0.1:PORT/mcp`. */
+  url: string;
+  /** The agent's own token; the bus knows the sender from it. */
+  token: string;
+  /** The bus tools the agent may call, such as `send_message`. */
+  tools: readonly string[];
+}
+
+/** An answer shape: the schema that parses the answer, and the JSON Schema the CLI gets. */
+export interface AdapterOutput {
+  schema: z.ZodType<unknown, z.ZodTypeDef, unknown>;
+  json: Record<string, unknown>;
 }
 
 /** A request that resumes an earlier session of the same vendor. */
@@ -105,6 +141,8 @@ export interface AdapterResult<T> {
   model: string;
   /** The vendor session, for `continueReview`; `null` when the CLI has none. */
   sessionId: string | null;
+  /** The account folder that holds the session; `null` for the CLI's home folder; absent when unknown. */
+  accountFolder?: string | null;
   tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
   /** Usage readings the call produced, such as Claude's `rate_limit_event`. */
   usage: RawUsageSample[];

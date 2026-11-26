@@ -251,11 +251,17 @@ _Avoid_: Inbox, feed, context
 
 **Meeting**:
 A turn-based discussion of one proposal, which ends when no
-invited role holds a major objection or when the meeting reaches its round
-cap.
+invited role holds a major objection, when the meeting reaches its round
+cap, or when the Project manager ends it early.
 _Avoid_: Discussion, standup, review
 
 ### Testing
+
+**Contracts step**:
+The step before tests first in a medium or large build. A Developer writes
+the plan's contract files, with stubs, so the tests compile against the real
+signatures.
+_Avoid_: Contracts task, scaffolding
 
 **Red check**:
 The engine's run of the tests before the code exists. Each test must fail on
@@ -277,6 +283,13 @@ _Avoid_: Freeze, protection
 A message from a Developer that says a locked test is wrong, with the reason.
 It goes to the Test engineer.
 _Avoid_: Test escalation, appeal
+
+**Setup command**:
+A build plan command that makes the fresh build worktree ready, such as a
+dependency install. Preflight runs each one once, before every other
+command, in the test commands' environment. Agents never install
+dependencies themselves.
+_Avoid_: Install step, bootstrap
 
 **Known failing**:
 A test that fails in every preflight run. It doesn't block the build.

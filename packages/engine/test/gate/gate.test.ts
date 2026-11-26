@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { CommandRunner } from "../../src/core.js";
 import {
   compareGate,
+  diagnosticLines,
   extractFailures,
   formatRegressions,
+  keptOutput,
   runGate,
   type GateRun,
 } from "../../src/gate/gate.js";
@@ -32,6 +34,22 @@ describe("gate", () => {
     const out =
       "\u001b[31mFAIL\u001b[0m src/a.test.ts (12 ms)\nok 1\nFAIL src/a.test.ts (40 ms)\nError: boom at 0x7ffd\n";
     expect(extractFailures(out)).toEqual(["Error: boom at 0x", "FAIL src/a.test.ts"]);
+  });
+
+  it("skips the lines of passing tests whose names hold a failure word", () => {
+    const out = [
+      "packages/engine test: \u2713 a failed agent call (1) 812ms",
+      "packages/engine test:    \u2713 keeps polling after a failed GitHub call 402ms",
+      "\u2714 retries a failed write (3.2ms)",
+      "ok 4 - reports an Error to the caller",
+      "PASS test/failed-runs.test.ts",
+      "packages/server test: \u00d7 sends neither message when a release follows a hold 20ms",
+      "packages/server test: AssertionError: expected false to be true",
+    ].join("\n");
+    expect(extractFailures(out)).toEqual([
+      "packages/server test: AssertionError: expected false to be true",
+      "packages/server test: \u00d7 sends neither message when a release follows a hold",
+    ]);
   });
 
   it("doesn't count fewer failures than the baseline as a regression", () => {
@@ -97,6 +115,23 @@ describe("gate", () => {
     expect(formatRegressions(worse)).toContain("Command: lint");
   });
 
+  it("doesn't count a test command that fails only on excused lines, and counts any other line", () => {
+    const baseline = run({ command: "test", passed: true });
+    const excused = [{ command: "test", cwd: null, failures: ["not ok - stock sync"] }];
+
+    const flaky = run({ command: "test", passed: false, failures: ["not ok - stock sync"] });
+    expect(compareGate(baseline, flaky, excused).regressed).toBe(false);
+
+    const both = run({
+      command: "test",
+      passed: false,
+      failures: ["not ok - stock sync", "not ok - cart total"],
+    });
+    expect(compareGate(baseline, both, excused).regressed).toBe(true);
+    // Without the excused lines, the flaky failure is a regression too.
+    expect(compareGate(baseline, flaky).regressed).toBe(true);
+  });
+
   it("runs test and lint commands in the repository", async () => {
     const seen: Array<{ line: string; cwd: string }> = [];
     const shell: CommandRunner = {
@@ -125,6 +160,25 @@ describe("gate", () => {
       ["test", true],
       ["lint", false],
     ]);
+  });
+
+  it("runs the policy's type check commands between its tests and lint", async () => {
+    const seen: string[] = [];
+    const shell: CommandRunner = {
+      run: async (line) => {
+        seen.push(line);
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+      },
+    };
+    const policy = PolicyFileSchema.parse({
+      version: 1,
+      tests: [{ command: "npm test" }],
+      typecheck: [{ command: "npx tsc --noEmit" }],
+      lint: [{ command: "npm run lint" }],
+    });
+    const result = await runGate(policy, { repoPath: "/repo", shell });
+    expect(seen).toEqual(["npm test", "npx tsc --noEmit", "npm run lint"]);
+    expect(result.commands.map((c) => c.kind)).toEqual(["test", "typecheck", "lint"]);
   });
 
   it("runs commands without Python bytecode and lists the untracked files they made", async () => {
@@ -205,5 +259,44 @@ describe("gate", () => {
     });
     await runGate(policy, { repoPath: "/repo", shell });
     expect(envs).toEqual([{ PYTHONDONTWRITEBYTECODE: "1" }, { PYTHONDONTWRITEBYTECODE: "1" }]);
+  });
+});
+
+describe("diagnosticLines", () => {
+  it("keeps every lint and type check line, without positions or count lines", () => {
+    const before = [
+      "src/a.ts(10,5): error TS2322: Type 'number' is not assignable to type 'string'.",
+      "  3:1  error  Unexpected var  no-var",
+      "Found 2 errors in 1 file.",
+      "",
+    ].join("\n");
+    const after = [
+      "src/a.ts(14,5): error TS2322: Type 'number' is not assignable to type 'string'.",
+      "  7:1  error  Unexpected var  no-var",
+      "Found 3 errors in 2 files.",
+    ].join("\n");
+
+    expect(diagnosticLines(before)).toEqual([
+      "L:C error Unexpected var no-var",
+      "src/a.ts(L,C): error TS2322: Type 'number' is not assignable to type 'string'.",
+    ]);
+    expect(diagnosticLines(after)).toEqual(diagnosticLines(before));
+  });
+});
+
+describe("keptOutput", () => {
+  it("keeps short output whole, without colors", () => {
+    expect(keptOutput("\u001b[31mAssertionError\u001b[0m: expected 1 to be 2")).toBe(
+      "AssertionError: expected 1 to be 2",
+    );
+  });
+
+  it("keeps the start and the end of output longer than the limit", () => {
+    const output = `AssertionError: head\n${"x".repeat(1000)}\nTests  1 failed`;
+    const kept = keptOutput(output, 100);
+    expect(kept.startsWith("AssertionError: head")).toBe(true);
+    expect(kept.endsWith("Tests  1 failed")).toBe(true);
+    expect(kept).toContain("[... output cut ...]");
+    expect(kept.length).toBeLessThan(150);
   });
 });

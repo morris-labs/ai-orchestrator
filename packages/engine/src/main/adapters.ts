@@ -19,7 +19,19 @@ export const MOCK_VENDORS_ENV = "AIO_MOCK_VENDORS";
 /** A JSON file with a `responses` list per vendor, for the vendors `AIO_MOCK_VENDORS` mocks. */
 export const MOCK_SCRIPT_ENV = "AIO_MOCK_SCRIPT";
 
+/**
+ * The folder that holds `account-dirs.json` and the account key, in place of
+ * the server's mount. A test engine sets it to a folder of its own, so its
+ * vendor calls never read or write the host's live account folders.
+ */
+export const CONFIG_DIR_ENV = "AIO_ENGINE_CONFIG_DIR";
+
 const VENDORS: readonly Vendor[] = ["claude", "codex", "copilot"];
+
+/** The engine's configuration folder: `AIO_ENGINE_CONFIG_DIR`, or the server's mount. */
+export function engineConfigDir(env: Record<string, string | undefined>): string {
+  return env[CONFIG_DIR_ENV] || ENGINE_CONFIG_MOUNT;
+}
 
 /** The mock script file: the `MockScript` responses, keyed by vendor. */
 export const MockScenarioSchema = z.record(
@@ -125,7 +137,7 @@ export async function selectAdapters(
   env: Record<string, string | undefined>,
   log: Logger,
   candidates: () => Record<Vendor, CliVendorAdapter> = () =>
-    createEngineAdapters(ENGINE_CONFIG_MOUNT, {}, (message) => log.warn(message)),
+    createEngineAdapters(engineConfigDir(env), {}, (message) => log.warn(message)),
 ): Promise<SelectedAdapters> {
   const mocked = parseMockVendors(env[MOCK_VENDORS_ENV]);
   const script = env[MOCK_SCRIPT_ENV] || undefined;

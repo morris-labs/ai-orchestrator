@@ -82,6 +82,11 @@ export class JobManager {
     return (this.options.now?.() ?? new Date()).toISOString();
   }
 
+  /** The same clock as `now()`, in milliseconds, for the finished-job limits. */
+  private nowMs(): number {
+    return (this.options.now?.() ?? new Date()).getTime();
+  }
+
   /** Starts a job and returns its state at once. */
   start(spec: JobStart, body: JobBody): Job {
     const job: Job = {
@@ -187,7 +192,7 @@ export class JobManager {
   /** Drops finished jobs past their age, then the oldest past the count limit. */
   private evict(): void {
     const limit = this.options.finishedLimit ?? FINISHED_JOB_LIMIT;
-    const cutoff = Date.now() - (this.options.finishedTtlMs ?? FINISHED_JOB_TTL_MS);
+    const cutoff = this.nowMs() - (this.options.finishedTtlMs ?? FINISHED_JOB_TTL_MS);
     const finished = [...this.jobs.values()]
       .filter((e) => e.finishedMs !== null)
       .sort((a, b) => (a.finishedMs as number) - (b.finishedMs as number));
@@ -233,8 +238,9 @@ export class JobManager {
   }
 
   private finish(entry: JobEntry, fields: Pick<Job, "status" | "exitCode" | "result" | "error">) {
-    entry.finishedMs = Date.now();
-    Object.assign(entry.job, fields, { finishedAt: this.now() });
+    const finished = this.options.now?.() ?? new Date();
+    entry.finishedMs = finished.getTime();
+    Object.assign(entry.job, fields, { finishedAt: finished.toISOString() });
     entry.events.emit("done", { ...entry.job });
     this.options.onFinished?.({ ...entry.job });
   }

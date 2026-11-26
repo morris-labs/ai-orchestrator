@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { BuildSummary } from "@aio/contracts";
 import { createServerIdentity, pinFromPem, pinnedFetch } from "@aio/contracts/tls";
 import { startApp, type App } from "../../src/api/app.js";
 import type { OpClient } from "../../src/secrets/op.js";
@@ -210,6 +211,134 @@ describe("startApp", () => {
     expect(usage.json.vendors).toEqual(
       expect.arrayContaining([expect.objectContaining({ vendor: "claude", overCeiling: true })]),
     );
+  });
+
+  it("stores a build, grants its calls at a ceiling, and reports its usage by seat, step, and specialty", async () => {
+    const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+    await waitFor(() => engine.sockets.length === 1);
+    // Claude is over its ceiling, as in the test above.
+    engine.emit({
+      type: "usage.sample",
+      vendor: "claude",
+      account: "user@example.com",
+      window: "5h",
+      utilization: 0.7,
+      spendUsd: null,
+      ceiling: { kind: "utilization", window: "5h", max: 0.6 },
+      resetAt: "2099-01-01T00:00:00.000Z",
+      sampleSource: "rate_limit_event",
+    });
+    engine.emit({
+      type: "build.changed",
+      build: {
+        id: BUILD,
+        slug: "add-export",
+        projectId: PROJECT_ID,
+        container: CONTAINER,
+        status: "running",
+        step: "tasks",
+        boxId: null,
+        createdAt: "2026-10-28T09:00:00.000Z",
+        updatedAt: "2026-10-28T09:00:00.000Z",
+      },
+    });
+    const owner = { runId: null, buildId: BUILD, seat: "developer", step: "tasks" } as const;
+    engine.sendRaw({
+      type: "lease.request",
+      leaseId: "B-L1",
+      ...owner,
+      vendor: "claude",
+      role: "fixer",
+      estimate: { tokens: 10 },
+    });
+    await waitFor(() => engine.leaseResponses.length === 1);
+    expect(engine.leaseResponses[0]).toMatchObject({
+      decision: "granted",
+      vendor: "claude",
+      redirectedFrom: null,
+    });
+    engine.emit({
+      type: "lease.settled",
+      leaseId: "B-L1",
+      ...owner,
+      specialties: ["node-dev"],
+      vendor: "claude",
+      role: "fixer",
+      tokens: { in: 300, out: 20 },
+      premiumRequests: 0,
+      costEstimate: 0.5,
+    });
+    const types = () =>
+      app.hub
+        .replay({ type: "hello", streamId: app.hub.streamId, lastSeq: 0 })
+        .events.map((e) => e.type);
+    await waitFor(() => types().includes("lease.settled"));
+    expect(types()).toEqual(expect.arrayContaining(["build.changed", "lease.settled"]));
+    const usage = await api("GET", `/api/v1/builds/${BUILD}/usage`);
+    expect(usage.status).toBe(200);
+    const totals = {
+      calls: 1,
+      tokensIn: 300,
+      tokensOut: 20,
+      premiumRequests: 0,
+      costEstimate: 0.5,
+    };
+    expect(usage.json).toEqual({
+      buildId: BUILD,
+      total: totals,
+      bySeat: [{ seat: "developer", ...totals }],
+      byStep: [{ step: "tasks", ...totals }],
+      bySpecialty: [{ specialty: "node-dev", ...totals }],
+    });
+    const unknown = await api("GET", "/api/v1/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2R/usage");
+    expect(unknown.status).toBe(404);
+  });
+
+  it("lists builds newest first and serves a build's latest state", async () => {
+    const OLD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+    const NEW = "01JB8Z5K3W6Q2V9X4T7R0M1N2R";
+    await waitFor(() => engine.sockets.length === 1);
+    const build = (
+      id: string,
+      createdAt: string,
+      over: Partial<BuildSummary> = {},
+    ): BuildSummary => ({
+      id,
+      slug: "add-export",
+      projectId: PROJECT_ID,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      boxId: "example-app-1",
+      createdAt,
+      updatedAt: createdAt,
+      ...over,
+    });
+    engine.emit({ type: "build.changed", build: build(OLD, "2026-10-28T09:00:00.000Z") });
+    engine.emit({ type: "build.changed", build: build(NEW, "2026-10-28T10:00:00.000Z") });
+    engine.emit({
+      type: "build.changed",
+      build: build(OLD, "2026-10-28T09:00:00.000Z", {
+        status: "paused",
+        updatedAt: "2026-10-28T11:00:00.000Z",
+      }),
+    });
+    const builds = () =>
+      app.hub
+        .replay({ type: "hello", streamId: app.hub.streamId, lastSeq: 0 })
+        .events.filter((e) => e.type === "build.changed").length;
+    await waitFor(() => builds() === 3);
+    const paused = await api("GET", `/api/v1/builds/${OLD}`);
+    expect(paused.status).toBe(200);
+    expect(paused.json).toMatchObject({ id: OLD, status: "paused", boxId: "example-app-1" });
+    const all = await api("GET", "/api/v1/builds");
+    expect((all.json.builds as { id: string }[]).map((b) => b.id)).toEqual([NEW, OLD]);
+    const mine = await api("GET", `/api/v1/builds?projectId=${PROJECT_ID}`);
+    expect((mine.json.builds as unknown[]).length).toBe(2);
+    const other = await api("GET", "/api/v1/builds?projectId=other-app-9f8e7d6c");
+    expect(other.json.builds).toEqual([]);
+    const missing = await api("GET", "/api/v1/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2S");
+    expect(missing.status).toBe(404);
   });
 
   it("clears a usage block that comes from a project's ceiling override", async () => {

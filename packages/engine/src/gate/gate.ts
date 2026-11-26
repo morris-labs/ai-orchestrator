@@ -11,17 +11,35 @@ import { join } from "node:path";
 import type { PolicyCommand, PolicyFile } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 
+/** What a gate command checks. */
+/** The kind of a gate command. Only a build's preflight runs `setup` commands. */
+export type GateCommandKind = "setup" | "test" | "typecheck" | "lint";
+
 export interface GateCommandResult {
-  kind: "test" | "lint";
+  kind: GateCommandKind;
   command: string;
   cwd: string | null;
   exitCode: number;
   passed: boolean;
   timedOut: boolean;
+  /** True when a per-test command exited 0 but ran no tests, which fails it. */
+  noTests?: boolean;
   /** Normalized failure lines, for comparing two runs of a failing command. */
   failures: string[];
   /** The last lines of the output, for reports and the fixer prompt. */
   outputTail: string;
+  /**
+   * The whole output without colors, when the caller asked for it with
+   * `GateOptions.keepOutput`. Output longer than `KEPT_OUTPUT_LIMIT` keeps its
+   * start and its end, so a failure's header and the run's summary both
+   * survive a long diff between them.
+   */
+  output?: string;
+  /**
+   * Every diagnostic line of the output, normalized by `diagnosticLines()`,
+   * when the caller asked for them with `GateOptions.diagnostics`.
+   */
+  diagnostics?: string[];
 }
 
 export interface GateRun {
@@ -49,12 +67,30 @@ export interface GateComparison {
 }
 
 const FAILURE_RE = /\b(FAIL(?:ED|URE)?|ERROR|Error|failed|AssertionError|Traceback|not ok)\b|✗|✖|×/;
+// A passing test's line, such as vitest's `✓ retries a failed call`, the
+// Node.js test runner's `✔`, TAP's `ok 4 - ...`, or jest's `PASS file`, after
+// an optional `pnpm -r` prefix such as `packages/engine test: `. Its name can
+// hold a failure word, and vitest lists only the slow passing tests, so such
+// a line comes and goes between runs and would look flaky.
+const PASS_RE = /^(?:\S+ \S+: )?\s*(?:[✓✔√]|ok \d+\b|PASS\b)/;
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
 // A runner's count line, such as vitest's `Tests  2 failed | 40 passed (42)`,
 // jest's `Tests: 1 failed, 5 passed, 6 total`, or eslint's `3 problems`.
-const SUMMARY_RE =
-  /\b\d+\s+(failed|failing|failures?|passed|passing|errors?|skipped|pending|todo|total|tests?|warnings?|problems?)\b/i;
+const COUNT_WORDS =
+  "failed|failing|failures?|passed|passing|errors?|skipped|pending|todo|total|tests?|warnings?|problems?";
+const SUMMARY_RE = new RegExp(`\\b\\d+\\s+(${COUNT_WORDS})\\b`, "i");
+// A count line after `extractFailures()` replaced its numbers with `N`.
+const COUNT_LINE_RE = new RegExp(`\\bN\\s+(${COUNT_WORDS})\\b`, "i");
+
+/**
+ * True for a failure line that only counts failures, such as
+ * `Tests N failed | N passed`. A count line doesn't name a test, so the
+ * test baseline ignores it.
+ */
+export function isCountLine(line: string): boolean {
+  return COUNT_LINE_RE.test(line);
+}
 
 /**
  * Failure lines from a command's output, with timings, addresses, and colors
@@ -65,7 +101,7 @@ const SUMMARY_RE =
 export function extractFailures(output: string): string[] {
   const seen = new Set<string>();
   for (const raw of output.replace(ANSI_RE, "").split("\n")) {
-    if (!FAILURE_RE.test(raw)) continue;
+    if (!FAILURE_RE.test(raw) || PASS_RE.test(raw)) continue;
     let line = raw
       .replace(/\(?\b\d+(\.\d+)?\s?(ms|s|sec|seconds)\b\)?/g, "")
       .replace(/0x[0-9a-f]+/gi, "0x")
@@ -75,6 +111,48 @@ export function extractFailures(output: string): string[] {
     if (line) seen.add(line);
   }
   return [...seen].sort();
+}
+
+/** The most diagnostic lines that `diagnosticLines()` keeps. */
+export const DIAGNOSTIC_LINE_LIMIT = 5000;
+
+/**
+ * Every line of a type check or lint command's output, so a run can be
+ * compared with an earlier run of the same command: colors, timings, and
+ * addresses removed, line and column numbers replaced with `L:C`, and count
+ * lines, such as `Found 3 errors`, left out. Unlike `extractFailures()`, it
+ * keeps lines without a failure word, such as `error TS2322` or `1:1 error`.
+ */
+export function diagnosticLines(output: string): string[] {
+  const seen = new Set<string>();
+  for (const raw of output.replace(ANSI_RE, "").split("\n")) {
+    let line = raw
+      .replace(/\(?\b\d+(\.\d+)?\s?(ms|s|sec|seconds)\b\)?/g, "")
+      .replace(/0x[0-9a-f]+/gi, "0x")
+      .replace(/\(\d+,\d+\)/g, "(L,C)")
+      .replace(/(^|[\s:])\d+:\d+(?=$|[\s:])/g, "$1L:C")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!line) continue;
+    if (SUMMARY_RE.test(line)) {
+      line = line.replace(/\d+/g, "N");
+      if (isCountLine(line)) continue;
+    }
+    seen.add(line);
+    if (seen.size >= DIAGNOSTIC_LINE_LIMIT) break;
+  }
+  return [...seen].sort();
+}
+
+/** The most characters of a command's output that `GateCommandResult.output` keeps. */
+export const KEPT_OUTPUT_LIMIT = 512 * 1024;
+
+/** `text` without colors, cut to its first and last `limit / 2` characters when longer than `limit`. */
+export function keptOutput(text: string, limit = KEPT_OUTPUT_LIMIT): string {
+  const plain = text.replace(ANSI_RE, "");
+  if (plain.length <= limit) return plain;
+  const half = Math.floor(limit / 2);
+  return `${plain.slice(0, half)}\n[... output cut ...]\n${plain.slice(-half)}`;
 }
 
 function tail(text: string, lines = 40): string {
@@ -92,10 +170,15 @@ export interface GateOptions {
   git?: CommandRunner;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Adds every diagnostic line of the output to the result, as `diagnosticLines()` reads it. */
+  diagnostics?: boolean;
+  /** Adds the whole output to the result, as `keptOutput()` cuts it. */
+  keepOutput?: boolean;
 }
 
-async function runOne(
-  kind: "test" | "lint",
+/** Runs one gate command in `options.repoPath` and reports its result. */
+export async function runGateCommand(
+  kind: GateCommandKind,
   cmd: PolicyCommand,
   options: GateOptions,
 ): Promise<GateCommandResult> {
@@ -115,6 +198,8 @@ async function runOne(
     timedOut: result.timedOut,
     failures: extractFailures(output),
     outputTail: tail(output),
+    ...(options.keepOutput ? { output: keptOutput(output) } : {}),
+    ...(options.diagnostics ? { diagnostics: diagnosticLines(output) } : {}),
   };
 }
 
@@ -141,15 +226,18 @@ export async function untrackedFiles(
 }
 
 /**
- * Runs every test and lint command of the policy, in order. When
+ * Runs every test, type check, and lint command of the policy, in order. When
  * `options.git` is set, lists the untracked files that appeared meanwhile
  * in `leftovers`, without deleting any.
  */
 export async function runGate(policy: PolicyFile, options: GateOptions): Promise<GateRun> {
   const before = options.git ? await untrackedFiles(options.git, options.repoPath) : null;
   const commands: GateCommandResult[] = [];
-  for (const cmd of policy.tests) commands.push(await runOne("test", cmd, options));
-  for (const cmd of policy.lint) commands.push(await runOne("lint", cmd, options));
+  for (const cmd of policy.tests) commands.push(await runGateCommand("test", cmd, options));
+  for (const cmd of policy.typecheck ?? []) {
+    commands.push(await runGateCommand("typecheck", cmd, options));
+  }
+  for (const cmd of policy.lint) commands.push(await runGateCommand("lint", cmd, options));
   const run: GateRun = { passed: commands.every((c) => c.passed), commands };
   if (options.git && before) {
     const after = await untrackedFiles(options.git, options.repoPath);
@@ -162,16 +250,40 @@ function key(c: Pick<GateCommandResult, "kind" | "command" | "cwd">): string {
   return `${c.kind}\0${c.command}\0${c.cwd ?? ""}`;
 }
 
+/** Failure lines of a test command that a gate comparison doesn't count, such as a build's flaky tests. */
+export interface ExcusedFailures {
+  command: string;
+  cwd: string | null;
+  failures: readonly string[];
+}
+
 /**
  * Compares a gate run with the baseline. A command that passed and now
  * fails is a regression; so is a command that failed at the baseline and
- * now fails with new failure lines. Failures the baseline already had are not.
+ * now fails with new failure lines. Failures the baseline already had are not,
+ * nor are the `excused` failure lines of a test command. A test command that
+ * fails only on excused lines isn't a regression, unless it timed out or
+ * names no failing test.
  */
-export function compareGate(baseline: GateRun, current: GateRun): GateComparison {
+export function compareGate(
+  baseline: GateRun,
+  current: GateRun,
+  excused: readonly ExcusedFailures[] = [],
+): GateComparison {
   const before = new Map(baseline.commands.map((c) => [key(c), c]));
+  const excusedLines = new Map<string, Set<string>>();
+  for (const e of excused) {
+    const k = key({ kind: "test", command: e.command, cwd: e.cwd });
+    excusedLines.set(k, new Set([...(excusedLines.get(k) ?? []), ...e.failures]));
+  }
   const regressions: Regression[] = [];
   for (const c of current.commands) {
     if (c.passed) continue;
+    const allowed = excusedLines.get(key(c));
+    if (allowed && !c.timedOut) {
+      const lines = c.failures.filter((line) => !isCountLine(line));
+      if (lines.length > 0 && lines.every((line) => allowed.has(line))) continue;
+    }
     const b = before.get(key(c));
     if (!b || b.passed) {
       regressions.push({
@@ -182,7 +294,7 @@ export function compareGate(baseline: GateRun, current: GateRun): GateComparison
       });
       continue;
     }
-    const known = new Set(b.failures);
+    const known = new Set([...b.failures, ...(allowed ?? [])]);
     const fresh = c.failures.filter((f) => !known.has(f));
     if (fresh.length > 0 || (c.timedOut && !b.timedOut)) {
       regressions.push({

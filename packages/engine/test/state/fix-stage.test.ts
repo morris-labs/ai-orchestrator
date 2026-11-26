@@ -306,7 +306,9 @@ describe("a gate_failed decision", () => {
     expect(state.decision?.kind).toBe("gate_failed");
     const fixesBefore = scenario.count("fix");
     rmSync(marker);
-    await run.decide({ option: "resume", waiveFindingIds: [] });
+    const answered = await run.decide({ option: "resume", waiveFindingIds: [] });
+    // A caller that polls right after the answer sees the run continue, not the old decision.
+    expect(answered).toMatchObject({ status: "running", decision: null });
     state = await run.settled();
     expect(state.status).toBe("finished");
     expect(scenario.count("fix")).toBeGreaterThan(fixesBefore);

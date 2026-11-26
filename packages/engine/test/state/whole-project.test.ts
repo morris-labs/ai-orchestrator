@@ -266,6 +266,7 @@ describe("the preview of a whole-project run", () => {
       continuationCap: 0,
       overlapThreshold: 0.5,
       depth: "standard",
+      copilotReview: false,
       scope: "whole",
       excludePaths: ["run-skip/**"],
     });
@@ -309,6 +310,7 @@ describe("the preview of a whole-project run", () => {
       continuationCap: 0,
       overlapThreshold: 0.5,
       depth: "standard",
+      copilotReview: false,
       scope: "whole",
     });
     // The API schema leaves `byVendor` out, but the engine's preview keeps it.
@@ -456,6 +458,7 @@ describe("exclusions at the range scope", () => {
       continuationCap: 0,
       overlapThreshold: 0.5,
       depth: "standard",
+      copilotReview: false,
       excludePaths: ["run-skip/**"],
     });
     expect(preview.groups.flatMap((g) => g.files).sort()).toEqual(["src/app.js", "vendor/dep.js"]);
@@ -490,6 +493,7 @@ describe("exclusions at the range scope", () => {
         continuationCap: 0,
         overlapThreshold: 0.5,
         depth: "standard",
+        copilotReview: false,
         excludePaths: ["{broken"],
       }),
     ).rejects.toThrow(/without its/);

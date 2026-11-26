@@ -11,11 +11,12 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const ENGINE_MAIN = path.join(ROOT, "packages/engine/dist/main.js");
 export const SERVER_MAIN = path.join(ROOT, "packages/server/dist/main.js");
 export const CLI_MAIN = path.join(ROOT, "packages/cli/dist/main.js");
+export const BUILD_MAIN = path.join(ROOT, "packages/engine/dist/build-main.js");
 export const SAMPLE_BUILD = path.join(ROOT, "tools/sample-repo/build.sh");
 
 /** Throws when a package the suite runs has not been built. */
 export function requireBuilt(): void {
-  for (const file of [ENGINE_MAIN, SERVER_MAIN, CLI_MAIN]) {
+  for (const file of [ENGINE_MAIN, SERVER_MAIN, CLI_MAIN, BUILD_MAIN]) {
     if (!existsSync(file)) {
       throw new Error(`${file} is missing. Run corepack pnpm -r build first.`);
     }
@@ -150,4 +151,19 @@ export function tailEvents(args: string[], env: NodeJS.ProcessEnv) {
     lines().some((l) => l.type === "hello") ? true : undefined,
   );
   return { child, exited, lines, stderr: () => stderr, connected };
+}
+
+/** The `aio-build` command's environment in a box of project `projectId`. */
+export function buildCliEnv(socket: string, projectId: string, boxId = "box-e2e") {
+  return childEnv({ AIO_BUILD_SOCKET: socket, AIO_PROJECT_ID: projectId, AIO_BOX_ID: boxId });
+}
+
+/** Runs the built `aio-build` command to completion. */
+export function runBuildCli(args: string[], env: NodeJS.ProcessEnv): Promise<CliResult> {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [BUILD_MAIN, ...args], { env }, (err, stdout, stderr) => {
+      const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
+      resolve({ code, stdout, stderr });
+    });
+  });
 }

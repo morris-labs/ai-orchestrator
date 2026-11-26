@@ -18,8 +18,10 @@ import {
   type RunTokenSample,
   profileRoles,
   runDepth,
+  wantsCopilotReview,
 } from "../src/index.js";
 import {
+  BUILD,
   RUN,
   fileGroup,
   leaseRequest,
@@ -49,6 +51,7 @@ describe("runs", () => {
       continuationCap: 0,
       depth: "standard",
       verifyFloor: "P2",
+      copilotReview: false,
     });
     expect(ResolvedRunRequestSchema.parse(parsed)).toEqual(parsed);
   });
@@ -439,6 +442,25 @@ describe("leases", () => {
   });
 });
 
+describe("the Copilot review option", () => {
+  it("is off by default and on when a request names it", () => {
+    expect(wantsCopilotReview(RunRequestSchema.parse(runRequest))).toBe(false);
+    const on = RunRequestSchema.parse({ ...runRequest, copilotReview: true });
+    expect(on.copilotReview).toBe(true);
+    expect(wantsCopilotReview(on)).toBe(true);
+  });
+
+  it("keeps the review for a stored run that predates the option", () => {
+    const { copilotReview: _option, ...stored } = RunRequestSchema.parse({
+      ...runRequest,
+      pipeline: "post-push",
+    });
+    const parsed = ResolvedRunRequestSchema.parse(stored);
+    expect(parsed.copilotReview).toBeUndefined();
+    expect(wantsCopilotReview(parsed)).toBe(true);
+  });
+});
+
 describe("postPushRoundCap", () => {
   it("gives a pre-push run its own cap after a push, and keeps a post-push request's", () => {
     expect(postPushRoundCap({ pipeline: "pre-push", roundCap: 2 })).toBe(POST_PUSH_ROUND_CAP);
@@ -470,5 +492,44 @@ describe("the whole-project scope", () => {
       prNumber: 1,
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("the build option", () => {
+  const build = {
+    buildId: BUILD,
+    fixer: {
+      placement: {
+        seat: "developer",
+        vendor: "claude",
+        tier: "medium",
+        effort: "high",
+        sources: { vendor: "role", tier: "role", effort: "role" },
+        fresh: true,
+      },
+      context: "Task T1, Cart total: make total() return the sum of the item prices.",
+    },
+  };
+
+  it("carries the build, the fixer's placement, and the task context to the engine", () => {
+    const create = EngineRunCreateSchema.parse({ ...runRequest, runId: RUN, build });
+    expect(create.build).toEqual(build);
+    expect(ResolvedRunRequestSchema.parse(create).build).toEqual(build);
+  });
+
+  it("is absent from a stand-alone request, and a client can't set it through the server", () => {
+    expect(EngineRunCreateSchema.parse({ ...runRequest, runId: RUN }).build).toBeUndefined();
+    expect(RunRequestSchema.parse({ ...runRequest, build })).not.toHaveProperty("build");
+  });
+
+  it("refuses a fixer placement without a seat", () => {
+    const { seat: _seat, ...placement } = build.fixer.placement;
+    expect(() =>
+      EngineRunCreateSchema.parse({
+        ...runRequest,
+        runId: RUN,
+        build: { ...build, fixer: { ...build.fixer, placement } },
+      }),
+    ).toThrow(/seat/);
   });
 });

@@ -106,6 +106,9 @@ in its `.aio/team/` directory. During planning, the owner can tell the
 Project manager to change a role's rules for one build, and the Scribe
 records the change in the build plan.
 
+For the fields of a role file and how the engine loads it, see
+[Role definition format](roles.md).
+
 ### Specialties
 
 Each agent runs as its own session, which the engine starts from the role
@@ -123,7 +126,8 @@ technology that needs different rules gets a role file of its own.
 A specialty names a skill in the account's skills folder, and the engine
 reads that skill's text for an agent on any vendor. A repository adds its own
 specialties in its `.aio/team/specialties/` directory. Usage reports break
-down by seat and by specialty.
+down by seat and by specialty. For how to add a specialty, see
+[Specialties](specialties.md).
 
 ### Core team
 
@@ -217,7 +221,11 @@ Copilot is off by default because of its small allowance, and no step
 requires it. The owner can turn
 it on for a build as a second Critic or as a pull request reviewer. With
 the single-vendor setting, a rule that requires another vendor falls back to a
-fresh session on the same vendor.
+fresh session on the same vendor. Without it, a seat on its shipped default
+vendor moves to the first other vendor (Claude, then Codex) when a rule
+excludes that vendor, such as a coverage check whose Test engineer the plan
+places on Claude. A vendor that the plan, a live change, or a repository role
+chose stays, and the engine raises a placement escalation instead.
 
 ## Team chat
 
@@ -297,6 +305,9 @@ and code takes the turns:
    (major or minor) for each point, and the reasons.
 3. The proposer revises. The meeting repeats until no major objection
    remains, or until it reaches its round cap, which defaults to three.
+   The Project manager can end the meeting earlier, such as once the plan
+   it discusses is frozen. The turn under way stops, and the major
+   objections of the last full round stay open.
 4. The Project manager reports the outcome and any open objections.
 
 The owner's posts in a meeting jump the queue. Every member reads them at its
@@ -321,24 +332,42 @@ digest. The owner can tell the Project manager to pause after any milestone.
 
 ### Preflight
 
-Before the first milestone, the engine checks that the test, type check, and
-lint commands that the build plan names all run. It then records a baseline
-from three runs of the repository's tests:
+Before the first milestone, the engine makes the fresh build worktree ready
+with the build plan's setup commands, such as a dependency install. Each
+setup command runs once, before every other command, with the leading
+`NAME=value` assignments of the plan's test commands in front, so the
+dependencies install for the same Node.js or interpreter that the tests
+use. A setup command that fails stops the build with a `preflight`
+escalation that holds the command's output tail. A plan without setup
+commands runs none: when the worktree's root holds a lockfile, such as
+`pnpm-lock.yaml`, the engine sends the Project manager a warning that names
+it instead of guessing a package manager. Agents never install
+dependencies or rebuild native modules themselves; a task that changes the
+dependencies reruns the plan's setup commands as written.
+
+The engine then checks that the test, type check, and lint commands that
+the build plan names all run, and records a baseline from three runs of the
+repository's tests:
 
 - **Known failing:** a test that fails in every run. It doesn't block the
   build or count as a regression.
 - **Flaky:** a test whose result differs between runs. The engine quarantines
   it. Its result doesn't block the build, count as a regression, or feed a
   failure fingerprint.
+- **Known check failures:** the lines that a failing type check or lint
+  command prints at preflight, with line and column numbers left out. A
+  later run of that command that prints only those lines doesn't fail the
+  task gate; a new line does.
 
-The Scribe lists both kinds in the pull request.
+The Scribe lists both kinds of test in the pull request.
 
 ### Milestone loop
 
 Each milestone runs these steps in order:
 
 1. **Contracts.** A Developer writes the shared types and interfaces, with
-   stubs, so that tests compile against the real signatures.
+   stubs, so that tests compile against the real signatures. See
+   [Contracts](#contracts).
 2. **Tests first.** The Test engineer writes the milestone's acceptance and
    contract tests from the criteria and the contracts. The engine checks the
    tests and locks them.
@@ -375,6 +404,36 @@ The build size sets which steps run, as the following table shows:
 | Simplify | Skipped | Last milestone only | Each milestone |
 | Review | Runs | Runs | Runs |
 
+### Contracts
+
+In a medium or large build, the Contracts step runs after preflight and
+before tests first. Without it, the Test engineer can't test a criterion
+whose types, routes, or schemas don't exist yet: its tests fail on imports,
+not on assertions. The step works as follows:
+
+- **Scope:** the contract files are the union of every task's `contracts`
+  list. A small build, and a plan whose tasks list no contract files, skip
+  the step, and `STATUS.md` shows it as skipped.
+- **Work:** a Developer writes each contract file, and a stub with the real
+  signature for each function, route, or command that the tests call. A
+  stub returns a value of its type that doesn't meet the criteria, so a
+  test fails on an assertion. The Developer may change the contract files
+  and the tasks' owned files, but no test path.
+- **Gate:** the task gate runs the plan's test, type check, and lint
+  commands. Each must pass, or fail only the way the preflight baseline
+  records, so the existing suite stays green. A failed attempt goes back
+  with the gate report, up to the attempt cap of a task, and then escalates
+  as `contracts`.
+- **Commit:** the engine commits the contracts and stubs before tests
+  first, and the tasks start from that commit.
+
+The Contracts step owns the contracts, so the Architect doesn't plan a task
+whose only job is to write them. Each task lists, in `contracts`, the
+contract files that it implements, and owns the files of its own code,
+stubs included. A plan that still has such a task, such as a plan frozen
+before the step existed, runs it as an ordinary task after tests first: its
+contract files exist by then, so the task finishes what the step left.
+
 ### Tests first
 
 The tests are the standard that grades the build, so the engine checks them
@@ -382,9 +441,12 @@ before any Developer starts:
 
 - **Criterion IDs:** each test names the acceptance criterion that it serves.
 - **Red check:** the engine runs the tests against the contract stubs. Each
-  test must fail on an assertion, not on a syntax, import, or setup error. A
-  test that passes before the code exists goes back to the Test engineer,
-  unless the build plan marks its criterion as one that already holds.
+  test must fail on an assertion, not on a syntax, import, load, or setup
+  error, and its command must run at least one test. A test that passes
+  before the code exists goes back to the Test engineer, unless the build
+  plan marks its criterion as one that already holds. Each test's command
+  runs with the leading `NAME=value` assignments of the plan's test commands
+  in front; see [Per-test commands](task-graph.md#per-test-commands).
 - **Coverage check:** in medium and large builds, an agent on a different
   vendor from the Test engineer reads each criterion with its tests, one
   time. It reports each criterion that the tests don't check, and the Test
@@ -438,6 +500,9 @@ them:
   shared file, and the engine doesn't run two tasks that declare the same
   shared file at the same time.
 
+For the dependency rules, the gate's treatment of earlier and later tasks,
+and oscillation, see [Task graph](task-graph.md).
+
 ### Task gate
 
 After each Developer attempt, the gate runs these checks:
@@ -464,6 +529,16 @@ with the Developer seat's placement and the task context, as a fresh agent.
 A finding that needs a plan change, such as a contract flaw, goes to the
 Project manager instead. The Project manager either sends it to the build
 team, or works it through in a planning meeting first.
+
+A review run that ends clean with follow-ups counts as clean: it passed the
+same test as a clean run, with findings that no vendor would check. The pull
+request lists those findings for the owner to check before the merge.
+
+A confirmed `nit` never goes to the fixer and doesn't keep a run from ending
+clean, as in the review pipeline. So a build can reach release ready with
+confirmed nits in the code. The pull request lists them under **Review nits**,
+and the release ready digest names them, so the owner can fix or leave each
+one.
 
 ## Verification methods
 
@@ -504,7 +579,11 @@ bounds. It works as follows:
   continue.
 - The escalation goes to the Project manager, which resolves anything inside
   the plan: retries, task order, seating on-call roles, and clarifications
-  that the plan already implies.
+  that the plan already implies. It can also give the escalation's task
+  more files to change, such as a file that the plan left out of every
+  task, as long as the file isn't a test path and no unfinished task owns
+  it. The engine adds the files to the task's owned files in the build
+  plan.
 - After a planning meeting, the Project manager can approve a change to
   contracts or architecture. The Scribe records that change as a decision,
   with the meeting linked.
@@ -522,13 +601,18 @@ The following conditions escalate:
 - A missing secret or external service. An agent never works around the gap,
   for example with a mock that ships.
 
+For the escalation kinds, levels, and the resolve request, see
+[Escalations](escalations.md).
+
 ## Boxes and lifecycle
 
 A build runs in one box, next to the Project manager's session. Each box runs
 at most one active build, and stand-alone review runs can run beside it. For
 parallel builds on one project, use another box.
 
-When the box stops, the build pauses. It resumes when the box starts. The
+When the box stops, the build pauses. It resumes when the box starts. A
+build in planning pauses too: its seat calls and meeting turns wait for the
+box start, and a call under way finishes. The
 Project manager is the box's main session, and the engine delivers
 escalations and digests into it as messages. Each delivery is a one-line
 pointer to the file, typed into the session.
@@ -580,6 +664,9 @@ Orchestrator covers builds and stand-alone review runs:
   15% of a window in 10 minutes.
 - **7-day window:** the same two rules, with thresholds that the owner sets.
 
+For the thresholds and how to change them, see
+[Usage watcher](../review-pipeline.md#usage-watcher).
+
 Stand-alone review runs keep their usage ceilings, which pause and redirect
 calls. Build calls are exempt from the ceilings. The watcher reads the usage
 of one machine and doesn't combine machines.
@@ -594,6 +681,15 @@ The engine attributes usage to each seat and each milestone loop step, so the
 owner can see which seats earn their cost. The Analyst's size estimate
 includes an expected usage range, and the watcher alerts when a build passes
 twice that estimate.
+
+The usage range covers the seats' tokens in, not the Project manager's
+session. The Analyst's rules anchor it on two measured builds: a small bug
+fix with one task used about 2 million tokens in, and a medium feature with
+10 tasks used about 54 million, without the usage that engine defects
+caused. Two builds can't calibrate a model of usage, so the anchors only keep
+the estimate in the right order of magnitude; before them, an Analyst
+estimated 1.5 to 3.5 million for the medium build. Replace the anchors with
+a fit once more builds are measured.
 
 ## App
 
@@ -674,7 +770,8 @@ and post. The planning team runs as engine calls under leases, so planning
 usage counts by seat.
 
 The server copies the `aio-build` skill from the installed package into each
-Claude account at start. The skill refuses to run in a Codex or Copilot box.
+Claude account at start. The skill refuses to run in a Codex or Copilot box. For
+the owner's walkthrough, see [Run your first build](first-build.md).
 
 ### Code and files
 
@@ -688,8 +785,8 @@ directory. Tasks, the task gate, and the review run all use that worktree,
 and the Project manager's own checkout stays untouched. A worktree for each
 task arrives with parallel Developers.
 
-The build plan holds its own test, type check, and lint commands, which the
-Project manager seeds from the policy file.
+The build plan holds its own setup, test, type check, and lint commands,
+which the Project manager seeds from the policy file.
 
 ### Review pipeline
 
@@ -709,8 +806,18 @@ the server to one agent call only, and attaches it again on every resume:
 
 - **Claude Code:** the `--mcp-config` and `--strict-mcp-config` flags, with
   the bus tools in the `--allowedTools` flag.
-- **Codex:** a `-c mcp_servers.NAME.url=URL` override on the `codex exec`
-  and `codex exec resume` commands.
+- **Codex:** `-c` overrides on the `codex exec` and `codex exec resume`
+  commands: `mcp_servers.NAME.url=URL`, `mcp_servers.NAME.bearer_token_env_var`
+  for the agent's token, and `mcp_servers.NAME.default_tools_approval_mode`
+  set to `approve`. Without the approval setting, `codex exec` refuses every
+  bus tool call.
+
+The engine types into an interactive Claude Code session only when the
+session shows its input prompt and no dialog, because a dialog takes the
+`Enter` key as its answer. For the evidence behind these rules, see
+[Vendor CLI facts for the build pipeline](vendor-cli-facts.md).
+For the message files, the routing, and the engine API of the bus, see
+[Team chat bus](team-chat.md).
 
 ### Permissions
 
@@ -724,7 +831,9 @@ engine detects a violation after the turn and can't prevent it.
 ### Session resume
 
 The size rule uses a cache window for each vendor, set in configuration. The
-defaults are 60 minutes for Claude and 30 minutes for Codex. A placement
+defaults are 60 minutes for Claude and 30 minutes for Codex. A spike measured
+Codex cache hits on resumes after 45 minutes, so the Codex default is
+conservative. A placement
 change starts a fresh agent, because a different model or effort invalidates
 the cache.
 
@@ -739,9 +848,6 @@ seat's usage from the session's transcript at each digest, as tokens only.
 
 ## Open questions
 
-- Whether a live Codex session loads an MCP server from a `-c` override, and
-  how Codex approves MCP tool calls without a terminal.
-- How long the Codex prompt cache lasts in practice.
 - Which project traits the engine can detect reliably for bench seating.
 - Scaffolding for greenfield projects, which follows support for repositories
   that already exist.

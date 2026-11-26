@@ -1,10 +1,11 @@
 import appPackage from "../../package.json";
-// The main window: menu bar, toolbar, update bars, the Boxes and Usage
-// tabs, the project list, the box table, the details panel, the terminal
+// The main window: menu bar, toolbar, update bars, the Boxes, Builds, and
+// Usage tabs, the project list, the box table, the details panel, the terminal
 // tabs, and the status bar.
 import { LOCAL_MACHINE_ID } from "@aio/contracts";
 import {
   type BoxView,
+  type BuildSummary,
   type ConvertToWorktreeResult,
   type ImageStatus,
   type Job,
@@ -18,6 +19,7 @@ import {
 import {
   MenuBar,
   UpgradeStatus,
+  UsageAlerts,
   Splitter,
   errorMessage,
   hasOpenDialog,
@@ -36,7 +38,9 @@ import {
 } from "@aio/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridge } from "../bridge";
-import { BoxTable } from "../components/BoxTable";
+import { BoxTable, type BuildBadges } from "../components/BoxTable";
+import { BuildView } from "../components/BuildView";
+import { BuildsView } from "../components/BuildsView";
 import { DetailsPanel } from "../components/DetailsPanel";
 import { ProjectPanel } from "../components/ProjectPanel";
 import { TerminalTabs } from "../components/TerminalTabs";
@@ -49,6 +53,7 @@ import { MountsDialog } from "../dialogs/MountsDialog";
 import { PromptsDialog } from "../dialogs/PromptsDialog";
 import { SetupWizard } from "../dialogs/SetupWizard";
 import { SshRemotesDialog } from "../dialogs/SshDialogs";
+import { activeBuildsByBox } from "../logic/builds";
 import { actionStates } from "../logic/enablement";
 import { visibleBoxes } from "../logic/filter";
 import { formatBytes } from "../logic/format";
@@ -73,6 +78,9 @@ import { CHORDS } from "./chords";
 import type { DialogState } from "./dialogs";
 import { useMachine } from "./machine";
 import { useBoxesData } from "./useBoxesData";
+import { useBuildsData } from "./useBuildsData";
+import { useEscalationNotices } from "./useEscalationNotices";
+import { useOpenEscalations } from "./useOpenEscalations";
 
 /** Pixels the table pane keeps: the filter box and a few rows. */
 const TABLE_MIN_HEIGHT = 120;
@@ -112,12 +120,17 @@ function store(key: string, value: string | null) {
   }
 }
 
+const PAGES = ["boxes", "builds", "usage"] as const;
+type Page = (typeof PAGES)[number];
+const PAGE_LABELS: Record<Page, string> = { boxes: "Boxes", builds: "Builds", usage: "Usage" };
+
 export function App() {
   const client = useApiClient();
   const machine = useMachine();
   // Each machine remembers its own project; this PC keeps the old key.
   const projectKey = machine.isLocal ? "selectedProject" : `machine.${machine.id}.selectedProject`;
   const data = useBoxesData();
+  const builds = useBuildsData();
   const { ask, confirm, inform } = useMessageBox();
   const messageOpen = useMessageBoxOpen();
   const toast = useToast();
@@ -129,7 +142,19 @@ export function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortState>({ column: "status", direction: "asc" });
   const [tabs, setTabs] = useState<TabsState>(emptyTabs);
-  const [page, setPage] = useState<"boxes" | "usage">("boxes");
+  const [page, setPage] = useState<Page>("boxes");
+  const [buildId, setBuildId] = useState<string | null>(null);
+  const openBuildId = useCallback((id: string) => {
+    setPage("builds");
+    setBuildId(id);
+  }, []);
+  const openBuild = useCallback((build: BuildSummary) => openBuildId(build.id), [openBuildId]);
+  const escalations = useOpenEscalations(builds.builds);
+  useEscalationNotices(escalations, builds.builds, openBuildId);
+  const buildBadges = useMemo<BuildBadges>(
+    () => ({ byBox: activeBuildsByBox(builds.builds), onOpen: openBuild }),
+    [builds.builds, openBuild],
+  );
   const [showDetails, setShowDetails] = useState(() => load("detailsVisible") !== "0");
   const [dialog, setDialog] = useState<DialogState>(null);
   const [transient, setTransient] = useState<ReadonlyMap<string, BoxView["status"]>>(new Map());
@@ -1498,6 +1523,7 @@ export function App() {
         onStatus={upgradeStatus}
         showCliNotice={false}
       />
+      <UsageAlerts />
       <UpdateBars
         updates={updates}
         image={image}
@@ -1514,7 +1540,7 @@ export function App() {
         onRetry={run.refresh}
       />
       <div className="ab-tabbar bx-pages" role="tablist" aria-label="Pages">
-        {(["boxes", "usage"] as const).map((p) => (
+        {PAGES.map((p) => (
           <button
             key={p}
             type="button"
@@ -1523,12 +1549,23 @@ export function App() {
             className={`ab-tab${page === p ? " ab-active" : ""}`}
             onClick={() => setPage(p)}
           >
-            {p === "boxes" ? "Boxes" : "Usage"}
+            {PAGE_LABELS[p]}
           </button>
         ))}
       </div>
       <div className="bx-main">
         {page === "usage" ? <UsageView boxes={all} disk={data.disk} /> : null}
+        {page === "builds" ? (
+          <BuildsView
+            builds={builds.builds}
+            projects={data.projects}
+            selectedId={buildId}
+            onSelect={setBuildId}
+            error={builds.error}
+            escalations={escalations}
+            detail={(b) => <BuildView key={b.id} build={b} escalations={escalations.get(b.id)} />}
+          />
+        ) : null}
         <Splitter
           direction="vertical"
           defaultSizes={[0.48, 0.52]}
@@ -1537,7 +1574,8 @@ export function App() {
           // to show Claude's input line. The table keeps a few rows.
           minSizes={[TABLE_MIN_HEIGHT, tabs.tabs.length > 0 ? TERMINAL_MIN_HEIGHT : 0]}
           className="bx-grow"
-          style={page === "usage" ? { display: "none" } : undefined}
+          // The terminals stay mounted on the other pages.
+          style={page !== "boxes" ? { display: "none" } : undefined}
         >
           <Splitter
             direction="horizontal"
@@ -1573,6 +1611,7 @@ export function App() {
                 onContextMenu={(b, x, y) => tableMenu.open(x, y, boxMenu(b))}
                 sort={sort}
                 onSortChange={setSort}
+                builds={buildBadges}
               />
             </div>
             {showDetails && (

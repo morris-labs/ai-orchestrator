@@ -35,6 +35,9 @@ export const HOME_PATHS = {
 /** Run files, relative to the project root: `<project>/.aio/runs/<run id>/`. */
 export const RUNS_DIR = ".aio/runs";
 
+/** Build files, relative to the project root: `<project>/.aio/builds/<slug>/`. */
+export const BUILDS_DIR = ".aio/builds";
+
 /** The file inside the image that names the engine version it carries. */
 export const ENGINE_VERSION_FILE = "/etc/aio-engine-version";
 
@@ -86,6 +89,12 @@ export const ENGINE_ENV = {
   engineVersion: "AIO_ENGINE_VERSION",
   /** The keeper's state directory inside the container, which holds the `sessions` file. */
   stateDir: "AIO_STATE_DIR",
+  /**
+   * The project's ID, as the server knows it. The engine's build socket
+   * refuses requests for any other project, and the `aio-build` command
+   * sends it with each request.
+   */
+  projectId: "AIO_PROJECT_ID",
 } as const;
 
 /** The container path the server mounts the keeper's state directory at. */
@@ -104,6 +113,7 @@ export const EngineEnvSchema = z
     [ENGINE_ENV.container]: z.string().min(1),
     [ENGINE_ENV.engineVersion]: z.string().min(1),
     [ENGINE_ENV.stateDir]: z.string().min(1).default(DEFAULT_ENGINE_STATE_DIR),
+    [ENGINE_ENV.projectId]: z.string().min(1).optional(),
   })
   .refine((env) => env[ENGINE_ENV.tokenFile] !== undefined || env[ENGINE_ENV.token] !== undefined, {
     message: `Set ${ENGINE_ENV.tokenFile} or ${ENGINE_ENV.token}.`,

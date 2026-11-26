@@ -10,6 +10,8 @@ import {
   PROJECT_ROOT,
   RUN,
   TOKEN,
+  buildState,
+  fakeBuildManager,
   fakeRunManager,
   finding,
   newBroker,
@@ -21,11 +23,13 @@ const auth = { authorization: `Bearer ${TOKEN}` };
 const listener = { port: 5173, proto: "tcp" as const, process: "node", boxId: null };
 
 let runs: ReturnType<typeof fakeRunManager>;
+let builds: ReturnType<typeof fakeBuildManager>;
 let app: FastifyInstance;
 
 async function build(expectedVersion = "1.0.0-dev") {
   const hub = newHub();
   runs = fakeRunManager();
+  builds = fakeBuildManager();
   app = await buildEngineApp({
     token: TOKEN,
     container: CONTAINER,
@@ -36,6 +40,7 @@ async function build(expectedVersion = "1.0.0-dev") {
     leases: newBroker(hub),
     log: silentLogger,
     runs,
+    builds,
     repos: {
       list: async () => [
         {
@@ -203,6 +208,130 @@ const cases: Record<string, Case> = {
     url: "/api/v1/usage/samples?vendor=claude",
     check: () => expect(runs.usageSamples).toHaveBeenCalledWith({ vendor: "claude" }),
   },
+  "engine.builds.create": {
+    method: "POST",
+    url: "/api/v1/builds",
+    body: {
+      projectId: "proj-1",
+      slug: "cart-total",
+      plan: {
+        title: "Add a total to the cart",
+        criteria: [{ id: "AC1", text: "The cart reports its total." }],
+        tasks: [
+          {
+            id: "T1",
+            title: "Cart total",
+            description: "Add total().",
+            ownedFiles: ["src/cart.mjs"],
+            criteria: ["AC1"],
+          },
+        ],
+        commands: { test: [{ command: "node --test" }] },
+      },
+    },
+    status: 201,
+    check: (j) => {
+      expect(j).toMatchObject({ slug: "cart-total" });
+      expect(builds.start).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: "cart-total", projectId: "proj-1" }),
+      );
+    },
+  },
+  "engine.builds.get": {
+    method: "GET",
+    url: "/api/v1/builds/cart-total",
+    check: (j) => expect(j).toMatchObject({ id: buildState.id, step: "tasks" }),
+  },
+  "engine.builds.pause": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/pause",
+    check: (j) => {
+      expect(j).toMatchObject({ status: "paused" });
+      expect(builds.pause).toHaveBeenCalledWith("cart-total", "owner");
+    },
+  },
+  "engine.builds.resume": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/resume",
+    body: { reason: "box" },
+    check: () => expect(builds.resume).toHaveBeenCalledWith("cart-total", "box"),
+  },
+  "engine.builds.planning.pause": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/planning/pause",
+    check: (j) => {
+      expect(j).toEqual({ paused: true });
+      expect(builds.pausePlanning).toHaveBeenCalledWith("cart-total");
+    },
+  },
+  "engine.builds.planning.resume": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/planning/resume",
+    check: (j) => {
+      expect(j).toEqual({ paused: false });
+      expect(builds.resumePlanning).toHaveBeenCalledWith("cart-total");
+    },
+  },
+  "engine.builds.cancel": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/cancel",
+    check: (j) => {
+      expect(j).toMatchObject({ status: "cancelled" });
+      expect(builds.cancel).toHaveBeenCalledWith("cart-total");
+    },
+  },
+  "engine.builds.delete": {
+    method: "DELETE",
+    url: "/api/v1/builds/cart-total",
+    check: (j) => {
+      expect(j).toMatchObject({ deletedAt: buildState.updatedAt });
+      expect(builds.delete).toHaveBeenCalledWith("cart-total");
+    },
+  },
+  "engine.builds.resolve": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/resolve",
+    body: { escalation: "E1", action: "clarify", note: "Prices are in cents." },
+    check: () =>
+      expect(builds.resolve).toHaveBeenCalledWith("cart-total", {
+        escalation: "E1",
+        action: "clarify",
+        by: "project_manager",
+        note: "Prices are in cents.",
+        changes: [],
+      }),
+  },
+  "engine.builds.inbox": {
+    method: "GET",
+    url: "/api/v1/builds/cart-total/inbox?all=true",
+    check: (j) => {
+      expect(j).toMatchObject({ slug: "cart-total", items: [{ id: "I1" }] });
+      expect(builds.inbox).toHaveBeenCalledWith("cart-total", { all: true });
+    },
+  },
+  "engine.builds.inbox.delivered": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/inbox/I1/delivered",
+    check: (j) => {
+      expect(j).toMatchObject({ id: "I1", ref: "E1" });
+      expect(builds.delivered).toHaveBeenCalledWith("cart-total", "I1");
+    },
+  },
+  "engine.builds.post": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/posts",
+    body: { to: "developer", toTask: "T1", body: "Keep the total in whole dollars." },
+    status: 201,
+    check: (j) => {
+      expect(j).toMatchObject({ message: { id: "M2" }, decision: { id: "D1" } });
+      expect(builds.post).toHaveBeenCalledWith("cart-total", {
+        to: "developer",
+        toTask: "T1",
+        type: "note",
+        body: "Keep the total in whole dollars.",
+      });
+    },
+  },
   "engine.ports": {
     method: "GET",
     url: "/api/v1/ports",
@@ -325,6 +454,12 @@ describe("engine API behavior", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: { code: "run_not_found" } });
+  });
+
+  it("answers not_found for an unknown build", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/builds/no-such", headers: auth });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
   it("answers not_found for an unknown finding", async () => {

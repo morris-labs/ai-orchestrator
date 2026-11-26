@@ -27,6 +27,20 @@ describe("policy", () => {
     expect(PolicyFileSchema.safeParse({ version: 1, commentAuthors: "alice" }).success).toBe(false);
   });
 
+  it("accepts an optional type check command list", () => {
+    const typecheck = [{ command: "npx tsc --noEmit", cwd: "web" }];
+    expect(PolicyFileSchema.parse({ version: 1, typecheck }).typecheck).toEqual(typecheck);
+    expect(PolicyFileSchema.parse({ version: 1 }).typecheck).toBeUndefined();
+    expect(PolicyFileSchema.safeParse({ version: 1, typecheck: "tsc" }).success).toBe(false);
+  });
+
+  it("accepts an optional setup command list", () => {
+    const setup = [{ command: "npm ci" }];
+    expect(PolicyFileSchema.parse({ version: 1, setup }).setup).toEqual(setup);
+    expect(PolicyFileSchema.parse({ version: 1 }).setup).toBeUndefined();
+    expect(PolicyFileSchema.safeParse({ version: 1, setup: "npm ci" }).success).toBe(false);
+  });
+
   it("rejects an unknown version and an unknown key", () => {
     expect(PolicyFileSchema.safeParse({ version: 2 }).success).toBe(false);
     expect(PolicyFileSchema.safeParse({ version: 1, risk_paths: ["src/**"] }).success).toBe(false);

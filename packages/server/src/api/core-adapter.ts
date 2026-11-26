@@ -145,6 +145,7 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       setPlatform: async (boxId, platform, restart) =>
         view(await boxes.setPlatform(boxId, platform, restart)),
       message: (boxId, text) => boxes.sendMessage(boxId, text),
+      deliver: (boxId, request) => boxes.deliver(boxId, request),
       startAll: (onlyWasRunning) => boxes.startAll(onlyWasRunning),
       stopAll: () => boxes.stopAll(),
       restartAll: () => boxes.restartAll(),

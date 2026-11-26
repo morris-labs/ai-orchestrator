@@ -156,6 +156,22 @@ keeper script, the container's first process, starts it.
   to the ports the box listens on or the project maps.
 - It runs the review pipeline and its vendor adapters, writes each run's
   files, discovers listening ports with `ss`, and proxies HTTP to them.
+- It opens a build socket at `/tmp/aio-build/build.sock` on the container's
+  own file system. The socket needs no engine token and accepts only build
+  requests: a planning seat call, the freeze, start, status, pause, resume,
+  and cancel. It refuses any request for a project other than the one in
+  `AIO_PROJECT_ID`, and any build whose saved state names another project.
+  A build that a box started takes pause, resume, and cancel requests only
+  from that box, and each box runs at most one active build. The
+  `aio-build` command in a box's session is its client.
+- It pauses a box's build when the server reports that the box stopped,
+  and resumes it when the box starts. A cancelled build keeps its branch and
+  worktree, gets a closing record from the Scribe, and stays resumable
+  until the owner deletes it, which removes the branch and worktree. A box
+  stop also holds a build that waits for a vendor's limit reset, and the box
+  start returns it to that wait. A box stop holds a build in planning as
+  well: its seat calls and meeting turns wait until the box starts. The owner pauses, resumes, cancels, and
+  deletes a build from the build view in the Boxes app, through the server.
 - It refuses to start when its version differs from
   `AIO_ENGINE_VERSION`, the version the server expects. The image
   records its engine version in `/etc/aio-engine-version`.
@@ -237,7 +253,45 @@ The protocol follows these rules:
 1. After the call, the engine emits a `lease.settled` event with the actual
    usage, which the server records against the vendor's account.
 
-The schemas for these frames are in `packages/contracts/src/lease.ts`.
+A build call names its build, its seat, and its step on the request, the
+settlement, and its agent events, and its `runId` is `null` unless it
+belongs to a review run that the build started. The server grants a build
+call on the vendor it names, even over a ceiling, and records its usage by
+seat and by step for the `GET /api/v1/builds/BUILD_ID/usage` route. Replace
+`BUILD_ID` with the build's ID.
+
+The schemas for these frames are in `packages/contracts/src/lease.ts`, and
+the build fields are in `packages/contracts/src/build-events.ts`.
+
+The server keeps the latest state of every build from its `build.changed`
+events in the `svc_builds` table. The `GET /api/v1/builds` route lists them,
+newest first, and takes an optional `projectId` query. The
+`GET /api/v1/builds/BUILD_ID` route returns one build. A build's `boxId`
+names the box whose Project manager runs it. The Boxes app lists builds on
+its Builds page and shows a badge on a box that runs an active build.
+
+The server also keeps each build's team chat messages from its
+`message.sent` events, in the `svc_build_messages` table, and the state and
+milestone of each task from its `build.task.changed` events, in the
+`svc_build_tasks` table. The `GET /api/v1/builds/BUILD_ID/messages` route
+returns the messages, oldest first, and the
+`GET /api/v1/builds/BUILD_ID/tasks` route returns the tasks. When you select
+a build on the Builds page, the Boxes app shows its build view: the messages
+as a conversation that you can filter by task, milestone, seat, and slice;
+the direct messages to the owner; a milestone board; and the usage by seat
+and by specialty. The view stays current from the event stream.
+
+The build view also holds the owner's post box, which sends a post to one
+agent through the `POST /api/v1/builds/BUILD_ID/posts` route. The Boxes app
+reads each active build's Project manager inbox through the
+`GET /api/v1/builds/BUILD_ID/inbox` route. The Builds page counts each
+build's open escalations, and the build view lists them. The owner
+resolves an escalation from the build view, which sends the owner's
+decision through the `POST /api/v1/builds/BUILD_ID/resolve` route to the
+engine that runs the build. When an
+escalation's pointer doesn't reach the Project manager's session within two
+minutes, the app raises one desktop notification for it, and a click opens
+the build.
 
 ## Container image
 
@@ -258,6 +312,10 @@ The image, `aio-agent` by default, is built on the host from
   tmux session.
 - `/usr/local/bin/aio-secret`, the client of the secrets broker, from
   the engine package.
+- `/usr/local/bin/aio-build`, the client of the engine's build socket, from
+  the engine package. It sends `AIO_PROJECT_ID`, which the server sets on
+  every container, and `AIO_BOX_ID`, which the server sets on every box
+  session, with each request. Run `aio-build --help` for its requests.
 
 The server creates each container with the keeper as its command, the
 project root mounted at its container path (the same path on Linux and

@@ -23,13 +23,43 @@ export type PolicyCommand = z.infer<typeof PolicyCommandSchema>;
 
 export const DEFAULT_GROUP_SIZE_LIMIT = 400;
 
+/**
+ * When a build resumes an agent's session for a message, and when it starts
+ * a fresh agent instead (the design's "Session resume"). A session larger
+ * than `freshAboveTokens` whose vendor's prompt cache expired gets a fresh
+ * agent, because a resume would reread its whole history at full price.
+ */
+export const BuildSessionSettingsSchema = z
+  .object({
+    /** The session size, in input tokens of its last turn, above which a cold session isn't resumed. */
+    freshAboveTokens: z.number().int().nonnegative().default(100_000),
+    /** How long each vendor's prompt cache lasts after a turn, in minutes. */
+    cacheWindowMinutes: z
+      .object({
+        claude: z.number().nonnegative().default(60),
+        codex: z.number().nonnegative().default(30),
+        copilot: z.number().nonnegative().default(5),
+      })
+      .strict()
+      .default({}),
+  })
+  .strict();
+export type BuildSessionSettings = z.infer<typeof BuildSessionSettingsSchema>;
+
 export const PolicyFileSchema = z
   .object({
     version: z.literal(1),
     /** Globs whose files always count as major. */
     riskPaths: z.array(z.string().min(1)).default([]),
     rules: z.array(PolicyRuleSchema).default([]),
+    /**
+     * Commands that make a fresh checkout ready to build and test, such as a
+     * dependency install. A build plan's setup list starts from this one.
+     */
+    setup: z.array(PolicyCommandSchema).optional(),
     tests: z.array(PolicyCommandSchema).default([]),
+    /** Type check commands. A build plan's type check list starts from this one. */
+    typecheck: z.array(PolicyCommandSchema).optional(),
     lint: z.array(PolicyCommandSchema).default([]),
     /** Facts about where the code runs, such as "Windows-only code paths under win/". */
     environmentLimits: z.array(z.string().min(1)).default([]),
@@ -48,6 +78,8 @@ export const PolicyFileSchema = z
     excludePaths: z.array(z.string().min(1)).optional(),
     /** Tiers for paths; the first rule that matches a file wins. */
     tierPaths: z.array(TierPathRuleSchema).optional(),
+    /** When a build resumes an agent's session and when it starts a fresh one. */
+    sessions: BuildSessionSettingsSchema.optional(),
   })
   .strict();
 export type PolicyFile = z.infer<typeof PolicyFileSchema>;

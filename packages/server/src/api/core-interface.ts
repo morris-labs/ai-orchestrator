@@ -6,6 +6,7 @@
 // Every input and output is a contract type. A method that fails throws an
 // error whose `code` property names a contract `ApiErrorCode` (for example an
 // `ApiError` from `./errors.ts`); the API maps it to a status code.
+import type { DeliveryRequest, DeliveryResult } from "../boxes/delivery.js";
 import type {
   AccountCreate,
   AccountPrepareRequest,
@@ -161,6 +162,12 @@ export interface CoreBoxes {
   setPlatform(boxId: string, platform: Platform, restart: boolean): Promise<BoxView>;
   /** Types one message into the box's interactive session. */
   message(boxId: string, text: string): Promise<void>;
+  /**
+   * Types a message into the box's session when it can take it, and
+   * confirms it from the transcript; never throws for a stopped box or a
+   * session that shows a dialog. See `boxes/delivery.ts`.
+   */
+  deliver(boxId: string, request: DeliveryRequest): Promise<DeliveryResult>;
   startAll(onlyWasRunning: boolean): Promise<BulkResult>;
   stopAll(): Promise<BulkResult>;
   restartAll(): Promise<BulkResult>;

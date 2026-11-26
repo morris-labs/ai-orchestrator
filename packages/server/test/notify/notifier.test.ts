@@ -1,4 +1,4 @@
-import { RunRequestSchema, type RoundSummary, type RunState } from "@aio/contracts";
+import { RunRequestSchema, type Message, type RoundSummary, type RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { Notifier } from "../../src/notify/notifier.js";
 import { T0, iso, setup } from "../usage/helpers.js";
@@ -49,14 +49,29 @@ const summary = (round: number): RoundSummary => ({
   finishedAt: iso(T0),
 });
 
-function make() {
-  const t = setup();
+function make(t = setup()) {
   let n = 0;
   const notifier = new Notifier({
     db: t.db,
     settings: () => t.settings.value,
     emit: (e) => t.hub.emit(e),
     idFn: () => `N-${(n += 1)}`,
+    builds: {
+      get: (id) =>
+        id === "01JB8Z5K3W6Q2V9X4T7R0M1N2Q"
+          ? {
+              id,
+              slug: "settings-page",
+              projectId: "mail-0123abcd",
+              container: "aio-agent-proj-mail-0123abcd",
+              status: "running",
+              step: "tasks",
+              boxId: BOX,
+              createdAt: iso(T0),
+              updatedAt: iso(T0),
+            }
+          : undefined,
+    },
   });
   t.hub.subscribe((e) => notifier.ingest(e));
   const runChanged = (state: RunState, roundSummary: RoundSummary | null = null) =>
@@ -219,5 +234,109 @@ describe("Notifier", () => {
     expect(t.notifier.list({ unread: false })).toMatchObject([
       { notificationId: "N-1", read: true },
     ]);
+  });
+});
+
+describe("usage alerts", () => {
+  const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+  const alert = {
+    rule: "build_estimate" as const,
+    title: "Build settings-page passed 2 times its usage estimate",
+    body: "B",
+    vendor: null,
+    account: null,
+    window: null,
+    buildId: BUILD,
+    boxId: BOX,
+  };
+
+  it("stores and sends a usage alert as a notification about its build", () => {
+    const t = make();
+    const notifier = t.notifier;
+    notifier.usageAlert(alert);
+
+    const [sent] = t.ofType("notification");
+    expect(sent).toMatchObject({
+      kind: "usage_alert",
+      title: alert.title,
+      buildId: BUILD,
+      boxId: BOX,
+      runId: null,
+      severity: "warning",
+    });
+    expect(notifier.list({ unread: true }).map((n) => n.kind)).toEqual(["usage_alert"]);
+  });
+
+  it("leaves the build out of a window alert", () => {
+    const t = make();
+    const notifier = t.notifier;
+    notifier.usageAlert({
+      ...alert,
+      rule: "jump",
+      vendor: "claude",
+      window: "5h",
+      buildId: null,
+      boxId: null,
+    });
+
+    expect(t.ofType("notification")[0]?.buildId).toBeUndefined();
+  });
+
+  it("knows a build already got its estimate alert after a restart", () => {
+    const t = make();
+    const notifier = t.notifier;
+    expect(notifier.hasBuildAlert(BUILD)).toBe(false);
+    notifier.usageAlert(alert);
+    const restarted = new Notifier({
+      db: t.db,
+      settings: () => t.settings.value,
+      emit: (e) => t.hub.emit(e),
+    });
+
+    expect(restarted.hasBuildAlert(BUILD)).toBe(true);
+  });
+});
+
+describe("direct messages", () => {
+  const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+  const message = (id: string, to: Message["to"]): Message => ({
+    version: 1,
+    id,
+    buildId: BUILD,
+    from: { kind: "seat", seat: "developer", taskId: "T1" },
+    to,
+    routing: "addressed",
+    type: "note",
+    taskId: "T1",
+    milestone: null,
+    paths: [],
+    body: "The export needs the owner's sign-off on the file name.",
+    createdAt: iso(T0),
+  });
+  const sent = (t: ReturnType<typeof make>, m: Message) =>
+    t.hub.emit({ type: "message.sent", message: m });
+
+  it("notifies the owner once about an agent's direct message, also after a restart", () => {
+    const t = make();
+    sent(t, message("M1", { kind: "owner" }));
+    sent(t, message("M1", { kind: "owner" }));
+    sent(t, message("M2", { kind: "seat", seat: "project-manager", taskId: null }));
+
+    const notes = t.ofType("notification");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({
+      kind: "direct_message",
+      title: "developer (T1) wrote to you in settings-page",
+      body: "The export needs the owner's sign-off on the file name.",
+      buildId: BUILD,
+      boxId: BOX,
+      runId: null,
+      severity: "info",
+    });
+
+    // The engine replays its events after a restart; the stored note stays the only one.
+    const again = make(t);
+    sent(again, message("M1", { kind: "owner" }));
+    expect(again.notifier.list({}).filter((n) => n.kind === "direct_message")).toHaveLength(1);
   });
 });

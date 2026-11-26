@@ -1,13 +1,23 @@
 // Sample documents and fakes shared by the engine service tests.
 import {
+  BuildPlanSchema,
   EngineRunCreateSchema,
+  type BuildDecision,
+  type PmInbox,
+  type BuildFreezeAnswer,
+  type BuildMeetingAnswer,
+  type BuildPlanning,
+  type BuildSeatAnswer,
+  type BuildState,
   type FileGroup,
   type Finding,
+  type Message,
   type RoundSummary,
   type RunState,
 } from "@aio/contracts";
 import { vi } from "vitest";
 import type { FindingDetail, RunManager } from "../../src/api/core-interface.js";
+import type { BuildManager } from "../../src/build/manager.js";
 import { EngineLeaseBroker } from "../../src/events/leases.js";
 import { EventHub } from "../../src/events/hub.js";
 import { silentLogger } from "../../src/main/logger.js";
@@ -135,6 +145,258 @@ export function fakeRunManager(): {
   return m as never;
 }
 
+export const buildState: BuildState = {
+  version: 1,
+  id: RUN,
+  slug: "cart-total",
+  projectId: "proj-1",
+  boxId: null,
+  container: CONTAINER,
+  title: "Add a total to the cart",
+  repoPath: PROJECT_ROOT,
+  base: "0123456789abcdef0123456789abcdef01234567",
+  branch: "build/cart-total",
+  worktree: `${PROJECT_ROOT}/.worktrees/build-cart-total`,
+  status: "running",
+  step: "tasks",
+  tasks: [{ id: "T1", status: "running", attempts: 1, commit: null }],
+  escalations: [],
+  placements: { singleVendor: null, plan: {}, live: [] },
+  createdAt: "2026-11-23T09:00:00.000Z",
+  updatedAt: "2026-11-23T09:00:00.000Z",
+};
+
+/** A build's planning record, with one Analyst call and no frozen plan. */
+export const planningRecord: BuildPlanning = {
+  version: 1,
+  id: RUN,
+  slug: "cart-total",
+  projectId: "proj-1",
+  boxId: null,
+  container: CONTAINER,
+  repoPath: PROJECT_ROOT,
+  issue: null,
+  calls: [
+    {
+      key: "plan-analyst-1",
+      seat: "analyst",
+      n: 1,
+      status: "done",
+      file: "planning/analyst-1.json",
+      startedAt: "2026-11-23T09:00:00.000Z",
+      finishedAt: "2026-11-23T09:05:00.000Z",
+    },
+  ],
+  frozen: [],
+  meetings: [],
+  createdAt: "2026-11-23T09:00:00.000Z",
+  updatedAt: "2026-11-23T09:05:00.000Z",
+};
+
+/** The answer to a seat call. */
+export const seatAnswer: BuildSeatAnswer = {
+  planning: planningRecord,
+  call: planningRecord.calls[0] as BuildSeatAnswer["call"],
+  answer: { title: "Add a total to the cart", size: "small" },
+};
+
+/** The answer to a freeze. */
+export const freezeAnswer: BuildFreezeAnswer = {
+  planning: {
+    ...planningRecord,
+    frozen: [
+      {
+        version: 1,
+        file: "plans/v1.json",
+        hash: "a".repeat(64),
+        push: true,
+        frozenAt: "2026-11-23T09:10:00.000Z",
+      },
+    ],
+  },
+  frozen: {
+    version: 1,
+    file: "plans/v1.json",
+    hash: "a".repeat(64),
+    push: true,
+    frozenAt: "2026-11-23T09:10:00.000Z",
+  },
+  plan: BuildPlanSchema.parse({
+    title: "Add a total to the cart",
+    criteria: [{ id: "AC1", text: "The cart reports the sum of its item prices." }],
+    tasks: [
+      {
+        id: "T1",
+        title: "Cart total",
+        description: "Sum the prices.",
+        ownedFiles: ["src/cart.mjs"],
+        criteria: ["AC1"],
+      },
+    ],
+    commands: { test: [{ command: "node test/cart.test.mjs" }] },
+    push: true,
+  }),
+};
+
+/** The answer to a meeting that ended with a major objection open. */
+export const meetingAnswer: BuildMeetingAnswer = {
+  planning: {
+    ...planningRecord,
+    meetings: [{ id: "meeting-1", file: "meetings/meeting-1.json", status: "round_cap" }],
+  },
+  meeting: {
+    version: 1,
+    id: "meeting-1",
+    proposer: "architect",
+    members: ["critic"],
+    brief: "Attack the design.",
+    roundCap: 1,
+    status: "round_cap",
+    rounds: [
+      {
+        n: 1,
+        proposal: "planning/architect-1.json",
+        turns: [
+          {
+            seat: "critic",
+            status: "done",
+            files: ["planning/critic-1.json"],
+            reply: {
+              position: "object",
+              summary: "The design misses the empty cart.",
+              points: [
+                { severity: "major", point: "No task covers an empty cart.", reason: "AC1." },
+              ],
+            },
+            posts: [],
+          },
+        ],
+      },
+    ],
+    posts: [],
+    open: [
+      { seat: "critic", severity: "major", point: "No task covers an empty cart.", reason: "AC1." },
+    ],
+    startedAt: "2026-11-23T09:06:00.000Z",
+    finishedAt: "2026-11-23T09:08:00.000Z",
+  },
+};
+
+/** A direct message from the Developer of T1 to the owner. */
+export const directMessage: Message = {
+  version: 1,
+  id: "M1",
+  buildId: RUN,
+  from: { kind: "seat", seat: "developer", taskId: "T1" },
+  to: { kind: "owner" },
+  routing: "addressed",
+  type: "note",
+  taskId: "T1",
+  milestone: null,
+  paths: [],
+  body: "The criteria miss an empty cart.",
+  createdAt: "2026-10-28T09:00:00.000Z",
+};
+
+/** An owner post to the Developer of T1. */
+export const ownerPost: Message = {
+  ...directMessage,
+  id: "M2",
+  from: { kind: "owner" },
+  to: { kind: "seat", seat: "developer", taskId: "T1" },
+  body: "Keep the total in whole dollars.",
+};
+
+/** The decision that records `ownerPost`, flagged as a plan change. */
+export const decision: BuildDecision = {
+  version: 1,
+  id: "D1",
+  buildId: RUN,
+  messageId: "M2",
+  to: ownerPost.to,
+  taskId: "T1",
+  milestone: null,
+  body: ownerPost.body,
+  createdAt: ownerPost.createdAt,
+  planChange: {
+    criteria: ["AC1"],
+    reason: "AC1: it asks for the exact sum.",
+    reportedBy: { kind: "seat", seat: "developer", taskId: "T1" },
+    messageId: "M3",
+    flaggedAt: ownerPost.createdAt,
+  },
+};
+
+/** A Project manager inbox with one escalation that waits for its answer. */
+export const pmInbox: PmInbox = {
+  buildId: RUN,
+  slug: "cart-total",
+  boxId: "box-1",
+  items: [
+    {
+      id: "I1",
+      kind: "escalation",
+      ref: "E1",
+      summary: "Escalation E1 (attempt_cap, for the project manager): Task T1 failed 4 attempts.",
+      file: "escalations/E1.json",
+      path: "/work/shop/.aio/builds/cart-total/escalations/E1.json",
+      needsAnswer: true,
+      createdAt: ownerPost.createdAt,
+      deliveredAt: ownerPost.createdAt,
+      answeredAt: null,
+      pointer:
+        "[aio-build cart-total I1] Escalation E1 (attempt_cap, for the project manager): Task T1 failed 4 attempts. Read /work/shop/.aio/builds/cart-total/escalations/E1.json",
+    },
+  ],
+};
+
+/** A build manager whose every method is a `vi.fn` returning sample data. */
+export function fakeBuildManager(): {
+  [K in keyof BuildManager]-?: ReturnType<typeof vi.fn>;
+} & BuildManager {
+  const m = {
+    plan: vi.fn(async () => seatAnswer),
+    freeze: vi.fn(async () => freezeAnswer),
+    meet: vi.fn(async () => meetingAnswer),
+    meetingPost: vi.fn(async () => meetingAnswer),
+    meetingEnd: vi.fn(async () => meetingAnswer),
+    start: vi.fn(async () => buildState),
+    get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
+    planning: vi.fn(async (slug: string) =>
+      slug === "in-planning" ? { ...planningRecord, slug } : null,
+    ),
+    pausePlanning: vi.fn(async () => ({ paused: true })),
+    resumePlanning: vi.fn(async () => ({ paused: false })),
+    pause: vi.fn(async () => ({ ...buildState, status: "paused" })),
+    resume: vi.fn(async () => buildState),
+    resolve: vi.fn(async () => buildState),
+    post: vi.fn(async () => ({
+      route: "agent",
+      message: ownerPost,
+      decision: { ...decision, planChange: null },
+    })),
+    messages: vi.fn(async (_slug: string, options?: { direct?: boolean }) =>
+      options?.direct ? [directMessage] : [directMessage, ownerPost],
+    ),
+    decisions: vi.fn(async () => [decision]),
+    inbox: vi.fn(async () => pmInbox),
+    delivered: vi.fn(async () => {
+      const { pointer: _pointer, ...item } = pmInbox.items[0]!;
+      return item;
+    }),
+    cancel: vi.fn(async () => ({ ...buildState, status: "cancelled" })),
+    delete: vi.fn(async () => ({
+      ...buildState,
+      status: "cancelled",
+      deletedAt: buildState.updatedAt,
+    })),
+    noteSession: vi.fn(async () => {}),
+    activeCount: vi.fn(() => 0),
+    close: vi.fn(async () => {}),
+  };
+  return m as never;
+}
+
 export function newHub(): EventHub {
   return new EventHub({ source: `engine:${CONTAINER}`, streamId: "stream-1" });
 }
@@ -158,6 +420,7 @@ export async function listenEngine(overrides: { hub?: EventHub; leases?: EngineL
     leases,
     log: silentLogger,
     runs: fakeRunManager(),
+    builds: fakeBuildManager(),
     repos: { list: async () => [], refs: async () => ({}) as never },
     ports: { list: () => [] },
   });

@@ -5,6 +5,7 @@ import {
   boxWorkDir,
   READ_ONLY_POST_PUSH_MESSAGE,
   isReadOnlyPostPush,
+  type BuildSummary,
   type EngineRouteKey,
   type Finding,
   type Vendor,
@@ -23,6 +24,7 @@ import { listDirs } from "./fs-dirs.js";
 import { ulid } from "./ulid.js";
 import { readHostTokenSamples } from "../usage/token-samples.js";
 import { commandLine } from "../jobs/process.js";
+import { controlBuild, resolveBuildEscalation, type BuildAction } from "../events/build-control.js";
 import { externalAttachArgv } from "../terminals/attach.js";
 
 type SR = ServerRoutes;
@@ -189,6 +191,13 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       }
     }
     throw new ApiError("run_not_found", `No run has the id ${runId}.`);
+  }
+
+  /** Sends an owner's build request to the engine that runs the build. */
+  function buildRequest(buildId: string, action: BuildAction): Promise<BuildSummary> {
+    const build = deps.builds.get(buildId);
+    if (!build) throw new ApiError("not_found", `No build has the id ${buildId}.`);
+    return controlBuild(deps.engines, build, action);
   }
 
   /** A run's mirrored findings, with the filters of `findings.list`. */
@@ -607,11 +616,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         body: { ...body, runId: ulid() },
       })) as RunState;
       deps.runs.upsert(run);
-      if (body.boxId !== undefined) {
-        await core.boxes.message(body.boxId, HOLD_EDITS_MESSAGE).catch((err: unknown) => {
-          deps.log?.(`Asking ${body.boxId} to hold edits failed: ${(err as Error).message}`);
-        });
-      }
+      if (body.boxId !== undefined) deps.sessionMessages.send(body.boxId, HOLD_EDITS_MESSAGE);
       reply.code(201);
       return run;
     },
@@ -622,6 +627,64 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       cleared: await deps.usage.clear(body.vendor, body.account),
       vendors: deps.usage.vendors(),
     }),
+
+    // Builds
+    "builds.list": async ({ query }) => ({ builds: deps.builds.list(query.projectId) }),
+    "builds.get": async ({ params }) => {
+      const build = deps.builds.get(params.buildId);
+      if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      return build;
+    },
+    "builds.pause": ({ params }) => buildRequest(params.buildId, "pause"),
+    "builds.resume": ({ params }) => buildRequest(params.buildId, "resume"),
+    "builds.cancel": ({ params }) => buildRequest(params.buildId, "cancel"),
+    "builds.delete": ({ params }) => buildRequest(params.buildId, "delete"),
+    "builds.resolve": async ({ params, body }) => {
+      const build = deps.builds.get(params.buildId);
+      if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      return resolveBuildEscalation(deps.engines, build, body);
+    },
+    "builds.usage": async ({ params }) => {
+      const usage = deps.builds.usage(params.buildId);
+      if (!usage) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      return usage;
+    },
+    "builds.messages": async ({ params }) => {
+      const messages = deps.builds.messages(params.buildId);
+      if (!messages) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      return { messages };
+    },
+    "builds.post": async ({ params, body, reply }) => {
+      const build = deps.builds.get(params.buildId);
+      if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      const engine = deps.engines.requireProject(build.projectId);
+      const answer = await engine.call("engine.builds.post", {
+        params: { slug: build.slug },
+        body,
+      });
+      reply.code(201);
+      return answer as never;
+    },
+    "builds.inbox": async ({ params, query }) => {
+      const build = deps.builds.get(params.buildId);
+      if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      const engine = deps.engines.get(build.container);
+      if (!engine) {
+        throw new ApiError(
+          "conflict",
+          `The container ${build.container} that runs build ${build.slug} is not running.`,
+        );
+      }
+      return engine.call("engine.builds.inbox", {
+        params: { slug: build.slug },
+        query: { all: query.all ? "true" : "false" },
+      }) as never;
+    },
+    "builds.tasks": async ({ params }) => {
+      const tasks = deps.builds.tasks(params.buildId);
+      if (!tasks) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      return { tasks };
+    },
 
     // Notifications
     "notifications.list": async ({ query }) => ({

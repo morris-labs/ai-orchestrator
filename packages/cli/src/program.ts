@@ -1206,6 +1206,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     )
     .option("--pr <number>", "The pull request, for post-push.", positiveInt)
     .option(
+      "--copilot-review",
+      "Request a Copilot review of each head the post-push loop pushes, and wait for it. Default: off, and the loop waits for the checks only.",
+    )
+    .option(
       "--role <role=vendors>",
       "Give a role to vendors from round 1 over the profile's default, such as reviewer=codex,copilot (repeatable).",
       collect,
@@ -1366,6 +1370,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           scope,
           excludePaths: o.exclude,
           ...(o.rootCauses ? { rootCauses: true } : {}),
+          ...(o.copilotReview ? { copilotReview: true } : {}),
         },
       });
       print(run, () => `Started run ${run.id}.\n`);

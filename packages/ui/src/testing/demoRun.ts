@@ -602,6 +602,75 @@ export function buildDemoEvents(): AioEvent[] {
     "server",
   );
 
+  // A build in the same project; the review dashboard leaves it out.
+  const BUILD_ID = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+  emit({
+    type: "build.changed",
+    build: {
+      id: BUILD_ID,
+      slug: "add-export",
+      projectId: PROJECT,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      boxId: null,
+      createdAt: new Date(T0).toISOString(),
+      updatedAt: new Date(T0 + clock * 1000).toISOString(),
+    },
+  });
+  emit({
+    type: "build.task.changed",
+    buildId: BUILD_ID,
+    taskId: "T1",
+    status: "running",
+    previousStatus: "pending",
+  });
+  emit({
+    type: "message.sent",
+    message: {
+      version: 1,
+      id: "M1",
+      buildId: BUILD_ID,
+      from: { kind: "seat", seat: "developer", taskId: "T1" },
+      to: { kind: "seat", seat: "project-manager", taskId: null },
+      routing: "by_type",
+      type: "question",
+      taskId: "T1",
+      milestone: null,
+      paths: [],
+      body: "Does the export include archived orders?",
+      createdAt: new Date(T0 + clock * 1000).toISOString(),
+    },
+  });
+  emit({
+    type: "build.inbox",
+    buildId: BUILD_ID,
+    slug: "add-export",
+    boxId: null,
+    item: {
+      id: "I1",
+      kind: "digest",
+      ref: "milestone-M1",
+      summary: "Milestone M1 (Export) is done: 1 of 1 milestones.",
+      file: "digests/milestone-M1.md",
+      path: "/work/example-app/.aio/builds/add-export/digests/milestone-M1.md",
+      needsAnswer: false,
+      createdAt: new Date(T0 + clock * 1000).toISOString(),
+      deliveredAt: null,
+      answeredAt: null,
+    },
+  });
+  emit({
+    type: "build.seat.usage",
+    buildId: BUILD_ID,
+    seat: "project-manager",
+    turns: 4,
+    tokensIn: 12000,
+    tokensOut: 800,
+    since: new Date(T0).toISOString(),
+    through: new Date(T0 + clock * 1000).toISOString(),
+  });
+
   const missing = EVENT_TYPES.filter((t) => !events.some((e) => e.type === t));
   if (missing.length > 0) throw new Error(`The demo misses event types: ${missing.join(", ")}.`);
   return events;

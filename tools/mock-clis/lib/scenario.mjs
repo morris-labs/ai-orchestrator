@@ -2,6 +2,7 @@
 // responses; each call takes the first one whose `match` fits the prompt and
 // whose `times` isn't used up. Use counts persist in a state file, so a
 // sequence of separate CLI invocations walks through the script.
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -59,6 +60,30 @@ export function pickResponse(cli, scenario, prompt) {
   });
 }
 
+/**
+ * Adds `turn` ({ input, output }) to session `id`'s running total in the
+ * state file and returns the new total. Without a state file, the total is
+ * the turn alone. The total stays in the state file, not in a vendor folder,
+ * so a test never writes into the account folder its environment names.
+ */
+export function addSessionTotal(cli, scenario, id, turn) {
+  const statePath = statePathFor(scenario.path);
+  if (!statePath) return { ...turn };
+  return withLock(scenario.path, () => {
+    const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+    const key = `${cli}:sessions`;
+    const sessions = state[key] ?? {};
+    const prior = sessions[id] ?? { input: 0, output: 0 };
+    const total = { input: prior.input + turn.input, output: prior.output + turn.output };
+    sessions[id] = total;
+    state[key] = sessions;
+    const tmp = `${statePath}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(state));
+    renameSync(tmp, statePath);
+    return total;
+  });
+}
+
 /** Appends one line describing this invocation to `MOCK_CLI_LOG`, when set. */
 export function logCall(cli, entry) {
   const path = process.env.MOCK_CLI_LOG;
@@ -72,12 +97,37 @@ export function answerText(response) {
   return JSON.stringify(response.output ?? { findings: [] });
 }
 
-/** Writes `response.writeFiles` ({ relative path: content }) under the working directory. */
+/**
+ * Writes `response.writeFiles` ({ relative path: content }) under the working
+ * directory. With `response.commit`, commits every change in the working
+ * directory with that message afterward, as an agent that commits does. A
+ * clean working directory gets no commit.
+ */
 export function writeFiles(response) {
   for (const [file, content] of Object.entries(response.writeFiles ?? {})) {
     const target = isAbsolute(file) ? file : join(process.cwd(), file);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, content);
+  }
+  const changed =
+    response.commit &&
+    execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim() !== "";
+  if (changed) {
+    execFileSync("git", ["add", "-A"], { stdio: "ignore" });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Mock Agent",
+        "-c",
+        "user.email=mock-agent@example.com",
+        "commit",
+        "-q",
+        "-m",
+        response.commit,
+      ],
+      { stdio: "ignore" },
+    );
   }
 }
 

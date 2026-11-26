@@ -201,7 +201,7 @@ according to the profile and the usage ceilings.
 |---|---|---|
 | Claude | `claude -p` | Fixer, always. Reviewer and disprover when the profile allows. |
 | Codex | `codex exec` | Reviewer, disprover, and fix confirmer. |
-| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Disprover of Codex findings in `offload`. Pull request reviewer after the push. |
+| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Disprover of Codex findings in `offload`. Pull request reviewer after the push, when the run requests a Copilot review. |
 
 A run has four roles: `reviewer` (one or more vendors), `disprover`,
 `confirmer`, and `fixer`. By default, the disprover and the confirmer come
@@ -473,6 +473,55 @@ only when that call reported nothing. Each line shows the age of its sample.
 After a window's reset time passes, its line shows **No recent data** instead
 of a percentage, until a later call records a sample. `aio review usage` lists
 the same windows, and shows `reset` for a window whose reset time has passed.
+
+## Usage watcher
+
+Beside the ceilings, an account-wide usage watcher covers builds and
+stand-alone review runs. It only alerts: nothing pauses because of it. Each
+alert appears in the **Usage alerts** list of both apps and as a desktop
+notification from the Boxes app. An alert about a build also goes to the
+Project manager of the build's box, and an alert about a window goes to the
+Project manager of every active build.
+
+The watcher checks each vendor account's 5-hour and 7-day windows with two
+rules, and each build with a third:
+
+- **Ceiling alert:** the window's usage is at or past `ceilingAt`, and the
+  burn rate over the last hour reaches the whole window before it resets. A
+  window at 100% always counts.
+- **Jump alert:** the window's usage rose by more than `jump` since the
+  lowest reading of the last `jumpMinutes` minutes.
+- **Build estimate alert:** a build's tokens in and out pass
+  `buildEstimateFactor` times the high end of its plan's usage estimate.
+  Each build gets this alert once.
+
+A window rule alerts when it starts to hold, not again while it keeps
+holding. Shares are fractions from 0 to 1, so `0.8` means 80%. The default
+thresholds are the following:
+
+| Setting | 5-hour window | 7-day window |
+|---|---|---|
+| `ceilingAt` | `0.8` | `0.8` |
+| `jump` | `0.15` | `0.05` |
+| `jumpMinutes` | `10` | `60` |
+
+The default `buildEstimateFactor` is `2`.
+
+To change the thresholds, send the `usageWatch` setting. A patch changes
+only the fields it names. For example, the following command sets the 7-day
+ceiling alert to 90% and the build estimate factor to 3:
+
+```bash
+curl --cacert ~/.ai-orchestrator/server.crt \
+    -H "Authorization: Bearer $(cat ~/.ai-orchestrator/server.token)" \
+    -H "Content-Type: application/json" \
+    -X PATCH -d '{"usageWatch": {"7d": {"ceilingAt": 0.9}, "buildEstimateFactor": 3}}' \
+    https://127.0.0.1:21400/api/v1/settings
+
+```
+
+To go back to the defaults, send `{"usageWatch": null}`. The server stores
+the thresholds in the `~/.ai-orchestrator/config.json` file.
 
 ## Review range
 
@@ -791,20 +840,40 @@ The engine refuses a retry, and changes nothing, in the following cases:
 After you push from a run's summary, the post-push loop runs on the pull
 request:
 
-1. Pushes the branch, opens or updates the pull request, and requests a
-   Copilot review.
-1. Polls the pull request until the Copilot review and the checks finish.
+1. Pushes the branch, opens or updates the pull request, and, with the
+   Copilot review option on, requests a Copilot review.
+1. Polls the pull request until the checks finish, and with the option on,
+   until the Copilot review finishes too.
 1. Imports the review comments and the logs of failing checks as findings.
 1. Has Codex verify each comment. For a comment it disproves, the loop
    replies on the thread with the evidence instead of changing code.
 1. Has Claude fix the confirmed findings, runs the gate, and pushes.
-1. Replies to and resolves each addressed thread, and requests another
-   Copilot review.
+1. Replies to and resolves each addressed thread, and with the option on,
+   requests another Copilot review.
 
-The loop ends when the Copilot review raises no new actionable comment and
-the checks pass, or when the only failing checks have causes outside the
-code, such as infrastructure or missing secrets. The round cap and the
-oscillation check apply here too.
+The loop ends when the checks pass and no imported finding is open, or when
+the only failing checks have causes outside the code, such as infrastructure
+or missing secrets. With the Copilot review option on, the loop also waits
+until the Copilot review of the pushed head raises no new actionable comment.
+The round cap and the oscillation check apply here too.
+
+### Copilot review option
+
+The Copilot review option is off by default. With the option off, the loop
+never requests a Copilot review and never waits for one. It still imports the
+comments that people, or a Copilot review that the repository requests on its
+own, leave on the pull request.
+
+To turn on the option, do one of the following:
+
+- In the Review app launcher, select **Request a Copilot review of each
+  push**. The launcher hides the option for a read-only run.
+- Pass the `--copilot-review` flag to the `aio review start` command.
+- Set the `copilotReview` field to `true` in the run request.
+
+The option applies to a pre-push run that continues into the post-push loop
+after you push, as well as to a post-push run. A run that started before the
+option existed keeps the Copilot review.
 
 ### Guardrails
 

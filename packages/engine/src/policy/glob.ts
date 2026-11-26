@@ -2,9 +2,19 @@
 
 const cache = new Map<string, RegExp>();
 
+export interface GlobOptions {
+  /**
+   * False reads `[` and `]` as themselves, for paths such as
+   * `app/[slug]/page.ts`. True, the default, reads `[...]` as a character class.
+   */
+  classes?: boolean;
+}
+
 /** Converts a glob to an anchored regular expression over `/`-separated paths. Throws on a malformed glob. */
-export function globToRegExp(glob: string): RegExp {
-  const cached = cache.get(glob);
+export function globToRegExp(glob: string, options: GlobOptions = {}): RegExp {
+  const classes = options.classes ?? true;
+  const key = classes ? glob : `literal-brackets:${glob}`;
+  const cached = cache.get(key);
   if (cached) return cached;
   let re = "";
   let braces = 0;
@@ -36,6 +46,8 @@ export function globToRegExp(glob: string): RegExp {
       braces -= 1;
       re += ")";
     } else if (c === "," && braces > 0) re += "|";
+    else if (c === "[" && !classes) re += "\\[";
+    else if (c === "]" && !classes) re += "\\]";
     else if (c === "[") {
       const close = glob.indexOf("]", i + 1);
       if (close === -1) re += "\\[";
@@ -55,7 +67,7 @@ export function globToRegExp(glob: string): RegExp {
   } catch (error) {
     throw new Error(`The glob ${glob} is invalid: ${(error as Error).message}`, { cause: error });
   }
-  cache.set(glob, result);
+  cache.set(key, result);
   return result;
 }
 

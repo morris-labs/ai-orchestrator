@@ -1,8 +1,8 @@
 // The Claude adapter: `claude -p` with `--output-format stream-json`. Flags
 // and output shapes follow the Claude Code headless documentation, checked
 // against Claude Code 2.1.310.
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UsageSample, UsageWindow } from "@aio/contracts";
 import {
@@ -21,11 +21,35 @@ import { childEnv } from "../process/env.js";
 import { runProcess } from "./process.js";
 import {
   AdapterError,
+  teamToolNames,
   type CliRequest,
   type CliResult,
   type CliLimitInfo,
+  type TeamAttachment,
   type TokenCounts,
 } from "./types.js";
+
+/**
+ * The `--mcp-config` content that attaches the team chat bus: one HTTP
+ * server that sends the agent's token. Checked against Claude Code 2.1.328.
+ */
+export function claudeMcpConfig(team: TeamAttachment): Record<string, unknown> {
+  return {
+    mcpServers: {
+      [team.server]: {
+        type: "http",
+        url: team.url,
+        headers: { Authorization: `Bearer ${team.token}` },
+      },
+    },
+  };
+}
+
+/** Files a call writes for its CLI, which `buildArgs` names. */
+export interface ClaudeCallFiles {
+  /** The MCP config file of a call with `team`. */
+  mcpConfig?: string;
+}
 
 /** Tools a read-only Claude role gets. */
 export const CLAUDE_READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "Bash"];
@@ -113,11 +137,22 @@ export interface ClaudeStreamSummary {
   badLines: number;
   /** The text of each `tool_result` block marked `is_error`, cut to its last 300 characters. */
   toolErrors?: string[];
+  /**
+   * The tokens of this call's model responses in the stream, each counted
+   * once, or `undefined` when the stream showed none. A call that stops
+   * before its result line has only these.
+   */
+  streamTokens?: Required<TokenCounts>;
 }
+
+/** How many sessions' running totals an adapter keeps. */
+const MAX_SESSION_TOTALS = 500;
 
 export class ClaudeAdapter extends CliAdapter {
   readonly vendor = "claude" as const;
   private readonly claudeOptions: ClaudeAdapterOptions;
+  /** The running total of each session this adapter called, by session ID. */
+  private readonly sessionTotals = new Map<string, Required<TokenCounts>>();
 
   constructor(options: ClaudeAdapterOptions = {}) {
     super(options);
@@ -143,7 +178,11 @@ export class ClaudeAdapter extends CliAdapter {
    * the ones the broker gave for this call: an API key among them means
    * `--bare`.
    */
-  buildArgs(req: CliRequest<unknown>, credentials: Record<string, string> = {}): string[] {
+  buildArgs(
+    req: CliRequest<unknown>,
+    credentials: Record<string, string> = {},
+    files: ClaudeCallFiles = {},
+  ): string[] {
     const args = ["-p", "--output-format", "stream-json", "--verbose"];
     const bare =
       this.claudeOptions.bare ??
@@ -158,13 +197,18 @@ export class ClaudeAdapter extends CliAdapter {
     if (req.systemPrompt) args.push("--append-system-prompt", req.systemPrompt);
     for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     args.push("--json-schema", JSON.stringify(this.jsonSchemaFor(req)));
+    // The bus comes from the config file only: `--strict-mcp-config` keeps
+    // out every other MCP server, and the token stays off the command line.
+    const team = req.team && files.mcpConfig ? teamToolNames(req.team) : [];
+    if (team.length > 0)
+      args.push("--mcp-config", files.mcpConfig as string, "--strict-mcp-config");
     if (req.tools === "read-only") {
       const policy = claudeReadOnlyPolicy(req.scratchDir);
       args.push(
         "--tools",
         policy.tools.join(","),
         "--allowedTools",
-        policy.allowed.join(","),
+        [...policy.allowed, ...team].join(","),
         "--disallowedTools",
         policy.disallowed.join(","),
         "--permission-mode",
@@ -173,39 +217,106 @@ export class ClaudeAdapter extends CliAdapter {
         "none",
       );
     } else {
+      if (team.length > 0) args.push("--allowedTools", team.join(","));
       args.push("--permission-mode", this.claudeOptions.writePermissionMode ?? "bypassPermissions");
     }
     return args;
   }
 
   protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
+    // A resumed session's `modelUsage` covers the whole session, so the
+    // adapter needs the total from before this call to record the turn alone.
+    const before = req.sessionId ? this.totalBefore(req.sessionId, req) : undefined;
     const parser = new ClaudeStreamParser(this.accountFor(req), this.ceiling);
     const credentials = await credentialsFor(`vendor:${this.vendor}`, this.command);
-    const result = await runProcess({
-      command: this.command,
-      args: this.buildArgs(req, credentials),
-      credentials,
-      cwd: req.cwd,
-      input: req.prompt,
-      env: this.envFor(req),
-      envProfile: `vendor:${this.vendor}`,
-      timeoutMs: req.timeoutMs,
-      signal: req.signal,
-      onLine: (line) => {
-        for (const sample of parser.push(line)) req.onUsage?.(sample);
-      },
-    });
+    // The bus's config holds the agent's token, so it goes in a file only
+    // this user can read, removed when the call ends.
+    const dir = req.team ? mkdtempSync(join(tmpdir(), "aio-claude-mcp-")) : null;
+    let result;
+    try {
+      const files: ClaudeCallFiles = {};
+      if (dir && req.team) {
+        files.mcpConfig = join(dir, "mcp.json");
+        writeFileSync(files.mcpConfig, JSON.stringify(claudeMcpConfig(req.team)), { mode: 0o600 });
+      }
+      result = await runProcess({
+        command: this.command,
+        args: this.buildArgs(req, credentials, files),
+        credentials,
+        cwd: req.cwd,
+        input: req.prompt,
+        env: this.envFor(req),
+        envProfile: `vendor:${this.vendor}`,
+        timeoutMs: req.timeoutMs,
+        signal: req.signal,
+        onLine: (line) => {
+          for (const sample of parser.push(line)) req.onUsage?.(sample);
+        },
+      });
+    } finally {
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
     const summary = parser.summary();
+    // A failed call spent tokens too, so the error carries what it spent.
+    const spent = (error: unknown): unknown => {
+      if (error instanceof AdapterError)
+        error.tokens = this.turnTokens(summary, before, req) ?? summary.streamTokens;
+      return error;
+    };
     const failure = this.processFailure(result, req);
-    if (failure) throw failure;
-    return this.interpret(
-      req,
-      summary,
-      result.stdout,
-      result.stderr,
-      result.exitCode,
-      result.durationMs,
-    );
+    if (failure) throw spent(failure);
+    let out: CliResult<T>;
+    try {
+      out = this.interpret(
+        req,
+        summary,
+        result.stdout,
+        result.stderr,
+        result.exitCode,
+        result.durationMs,
+      );
+    } catch (error) {
+      throw spent(error);
+    }
+    return { ...out, tokens: this.turnTokens(summary, before, req) ?? out.tokens };
+  }
+
+  /**
+   * The tokens of this call alone. A result's `modelUsage` covers the whole
+   * session, so the adapter saves it as the session's total and subtracts
+   * the total from `before`. `undefined` when the result has no
+   * `modelUsage`, whose `usage` covers this call only.
+   */
+  private turnTokens(
+    summary: ClaudeStreamSummary,
+    before: Required<TokenCounts> | undefined,
+    req: CliRequest<unknown>,
+  ): Required<TokenCounts> | undefined {
+    const res = summary.result;
+    if (!res || !hasModelUsage(res)) return undefined;
+    const total = claudeTokens(res, summary.model ?? req.model ?? null).tokens;
+    const id = summary.sessionId ?? req.sessionId;
+    if (id) {
+      this.sessionTotals.delete(id);
+      this.sessionTotals.set(id, total);
+      if (this.sessionTotals.size > MAX_SESSION_TOTALS) {
+        const oldest = this.sessionTotals.keys().next().value;
+        if (oldest !== undefined) this.sessionTotals.delete(oldest);
+      }
+    }
+    return before ? tokensSince(total, before) : total;
+  }
+
+  /**
+   * Session `id`'s running total before a call that resumes it: the total
+   * this adapter last saw, or, after an engine restart, the total of the
+   * session's transcript in the call's config folder.
+   */
+  private totalBefore(id: string, req: CliRequest<unknown>): Required<TokenCounts> | undefined {
+    const known = this.sessionTotals.get(id);
+    if (known) return known;
+    const projects = join(this.configDir(req) ?? join(homedir(), ".claude"), "projects");
+    return claudeTranscriptTotals(sessionTranscriptFiles(projects, id));
   }
 
   /** Builds the result or the error from a finished stream. Exposed for fixture tests. */
@@ -313,6 +424,8 @@ export class ClaudeStreamParser {
   private result: Record<string, unknown> | null = null;
   private badLines = 0;
   private readonly toolErrors: string[] = [];
+  /** Each model response's tokens, by message ID. */
+  private readonly responses = new Map<string, Required<TokenCounts>>();
 
   constructor(
     private readonly account: string,
@@ -343,6 +456,7 @@ export class ClaudeStreamParser {
         const message = event.message as Record<string, unknown> | undefined;
         if (typeof message?.model === "string" && message.model !== "<synthetic>")
           this.model = message.model;
+        if (message) noteResponse(this.responses, message);
         if (typeof event.error === "string") {
           this.apiError = event.error;
           this.apiErrorText = assistantText(message);
@@ -374,6 +488,7 @@ export class ClaudeStreamParser {
       result: this.result,
       badLines: this.badLines,
       toolErrors: [...this.toolErrors],
+      ...(this.responses.size > 0 ? { streamTokens: sumCounts(this.responses.values()) } : {}),
     };
   }
 
@@ -504,6 +619,118 @@ export function claudeTokens(
 
 function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** Whether a result line carries `modelUsage`, the session's running total. */
+function hasModelUsage(result: Record<string, unknown>): boolean {
+  const usage = result.modelUsage;
+  return usage !== null && typeof usage === "object" && Object.keys(usage).length > 0;
+}
+
+/** The change from `before` to `total`, never below zero. */
+export function tokensSince(
+  total: Required<TokenCounts>,
+  before: Required<TokenCounts>,
+): Required<TokenCounts> {
+  const since = (key: keyof TokenCounts) => Math.max(0, total[key] - before[key]);
+  return {
+    input: since("input"),
+    output: since("output"),
+    fresh: since("fresh"),
+    cacheWrite: since("cacheWrite"),
+    cacheRead: since("cacheRead"),
+  };
+}
+
+function names(dir: string): string[] {
+  try {
+    return readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The transcripts of session `id` under a Claude Code `projects` folder: its
+ * `ID.jsonl` file in any working directory folder, and its subagents'.
+ */
+export function sessionTranscriptFiles(projects: string, id: string): string[] {
+  const files: string[] = [];
+  for (const folder of names(projects)) {
+    const dir = join(projects, folder);
+    if (!names(dir).includes(`${id}.jsonl`)) continue;
+    files.push(join(dir, `${id}.jsonl`));
+    const subagents = join(dir, id, "subagents");
+    for (const name of names(subagents)) {
+      if (name.endsWith(".jsonl")) files.push(join(subagents, name));
+    }
+  }
+  return files;
+}
+
+/**
+ * The tokens that `files` record, each model response counted once by its
+ * message ID, or `undefined` when they record none. Claude Code writes a
+ * line for each content block of a response, each with the response's usage.
+ */
+export function claudeTranscriptTotals(
+  files: readonly string[],
+): Required<TokenCounts> | undefined {
+  const responses = new Map<string, Required<TokenCounts>>();
+  for (const file of files) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      if (!line.includes('"usage"')) continue;
+      let entry: Record<string, unknown>;
+      try {
+        entry = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const message = entry.message as Record<string, unknown> | undefined;
+      if (entry.type === "assistant" && message) noteResponse(responses, message);
+    }
+  }
+  return responses.size === 0 ? undefined : sumCounts(responses.values());
+}
+
+/**
+ * Notes the tokens of one assistant `message` in `responses`, by its ID.
+ * Claude Code repeats a response's usage on each of its content blocks, so
+ * a response counts once; `<synthetic>` messages spent nothing.
+ */
+function noteResponse(
+  responses: Map<string, Required<TokenCounts>>,
+  message: Record<string, unknown>,
+): void {
+  const usage = message.usage as Record<string, unknown> | undefined;
+  if (!usage || message.model === "<synthetic>" || typeof message.id !== "string") return;
+  const fresh = num(usage.input_tokens);
+  const cacheWrite = num(usage.cache_creation_input_tokens);
+  const cacheRead = num(usage.cache_read_input_tokens);
+  const counts = {
+    input: fresh + cacheWrite + cacheRead,
+    output: num(usage.output_tokens),
+    fresh,
+    cacheWrite,
+    cacheRead,
+  };
+  // Lines of one response can differ while it streams: keep the largest.
+  const seen = responses.get(message.id);
+  responses.set(message.id, seen && seen.output > counts.output ? seen : counts);
+}
+
+function sumCounts(counts: Iterable<Required<TokenCounts>>): Required<TokenCounts> {
+  const total = { input: 0, output: 0, fresh: 0, cacheWrite: 0, cacheRead: 0 };
+  for (const c of counts) {
+    for (const key of Object.keys(total) as Array<keyof typeof total>) total[key] += c[key];
+  }
+  return total;
 }
 
 const lastAccount = new Map<string, string>();
