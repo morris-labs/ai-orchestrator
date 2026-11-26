@@ -6,6 +6,47 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Added
+
+- Build pipeline, phase 1. A Project manager session in a box runs a build
+  through the `aio-build` command and skill: the Analyst and the Architect
+  plan it, the Critic reviews the plan, and the owner freezes it. The engine
+  then runs preflight, the Contracts step, tests first, the plan's tasks in
+  dependency order, one review pipeline run, and release ready with the
+  Scribe. See `docs/build-pipeline/`.
+- Tests first: the Test engineer writes the tests before any code, the red
+  check makes each one fail on an assertion against the stubs, and the
+  engine locks them. A coverage check on another vendor looks for criteria
+  that the tests miss.
+- Task gates with a preflight baseline of known failing and flaky tests, a
+  failure fingerprint that seats the Debugger on a repeated failure, and test
+  disputes that the Project manager settles.
+- Escalations that pause only the affected task and its dependents, with
+  resolutions from `aio-build`, including `--own` to give a task more files.
+- Team chat between agents over an MCP bus, with questions, direct messages,
+  owner posts, and resumed sessions.
+- Roles as agent definitions, specialties from skills, seat placements across
+  Claude, Codex, and Copilot, and a single-vendor setting.
+- The Boxes app's Builds page and build view: messages, the task board,
+  usage by seat, waiting escalations, and owner controls to pause, resume,
+  cancel, and delete a build.
+- Usage by seat and step, the Project manager's usage from its transcript,
+  and usage watcher alerts in both apps and on the desktop.
+- The review policy's optional `setup` and `typecheck` command lists.
+
+### Changed
+
+- The Copilot pull request review is a review run option, off by default.
+- Agent calls run on a shared core in the engine, used by review runs and
+  builds.
+
+### Fixed
+
+- The engine client reconnect test and the split-batch concurrency test no
+  longer fail on a busy runner.
+- The e2e tests no longer write mock Codex session files into the live
+  account folder.
+
 ## [3.2.3] - 2026-11-22
 
 ### Fixed
