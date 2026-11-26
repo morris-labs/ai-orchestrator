@@ -34,6 +34,7 @@ import { outsideWritable } from "../gate.js";
 import { pathMatcher } from "../paths.js";
 import { runGateCommand } from "../../gate/gate.js";
 import { runRedCheck, type ListedTest, type RedCheck } from "../red-check.js";
+import { landedWhileWaiting, seatWaits } from "../seat-wait.js";
 import { setupNote, testEnvironmentNote } from "../test-command.js";
 import type { RoleTask } from "../roles/index.js";
 import { lockFiles, readTestLock, writeTestLock } from "../test-lock.js";
@@ -65,6 +66,10 @@ export interface RoundRecord {
   round: number;
   /** The worktree's `HEAD` when the round started. */
   start: string;
+  /** The worktree's `HEAD` when the Test engineer's turn began. */
+  turn?: string;
+  /** The worktree's `HEAD` when the Test engineer's turn ended. */
+  end?: string;
   callKey: string;
   answer?: { vendor: string; model: string; output: Record<string, unknown> };
   check?: RoundCheck;
@@ -170,17 +175,36 @@ async function readText(path: string): Promise<string | null> {
 }
 
 /**
+ * The paths that other seats committed while tests first waited for the
+ * Test engineer, in rounds 1 to `last`: the Test engineer didn't change them.
+ */
+async function othersCommits(ctx: BuildContext, last: number): Promise<string[]> {
+  const rounds: RoundRecord[] = [];
+  for (let n = 1; n <= last; n += 1) {
+    const record = await ctx.store.readJson<RoundRecord>(ctx.store.path(roundFile(n)));
+    if (record) rounds.push(record);
+  }
+  return landedWhileWaiting(ctx.worktree, seatWaits(rounds));
+}
+
+/**
  * Checks the tests a round's answer lists, then runs the red check over the
  * ones that pass those checks. Changed files outside the test paths are put
- * back first, so the tests run against the stubs.
+ * back first, so the tests run against the stubs, except the files that
+ * other seats committed while the round waited for its seat.
  */
 async function checkRound(
   ctx: BuildContext,
   scope: Scope,
+  n: number,
   output: Record<string, unknown>,
 ): Promise<RoundCheck> {
   const problems: string[] = [];
-  const outside = outsideWritable(await ctx.worktree.changedSince(scope.base), scope.paths);
+  const outside = outsideWritable(
+    await ctx.worktree.changedSince(scope.base),
+    scope.paths,
+    await othersCommits(ctx, n),
+  );
   if (outside.length > 0) {
     await ctx.worktree.restorePaths(scope.base, outside);
     problems.push(
@@ -313,6 +337,7 @@ async function round(
   const specialties = await ctx.specialties(
     unique(ctx.plan.tasks.flatMap((task) => task.specialties)),
   );
+  const waited = record;
   const outcome = await ctx.callSeat({
     seat: TEST_ENGINEER,
     specialties,
@@ -322,11 +347,16 @@ async function round(
     // The Test engineer writes the tests of every task in scope, so a
     // message about any of them reaches this agent.
     taskIds: ctx.plan.tasks.map((task) => task.id),
+    started: async () => {
+      waited.turn = await ctx.worktree.head();
+      await ctx.store.writeJson(path, waited);
+    },
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
+  record.end = await ctx.worktree.head();
   await ctx.store.writeJson(path, record);
   await ctx.calls.checkpoint();
-  const check = await checkRound(ctx, scope, outcome.output);
+  const check = await checkRound(ctx, scope, n, outcome.output);
   // A check that the engine stopped part way says nothing about the round.
   if (ctx.signal.aborted) throw new RunCancelled();
   const checked: CheckedRound = { ...record, check };
@@ -340,7 +370,8 @@ async function lock(ctx: BuildContext, scope: Scope, record: CheckedRound): Prom
     await ctx.worktree.commitAll(`test(build): add the tests first for ${ctx.plan.title}`);
   }
   const commit = await ctx.worktree.head();
-  const changed = await ctx.worktree.changedSince(scope.base);
+  // Only test paths: other seats' commits since the base aren't tests.
+  const changed = (await ctx.worktree.changedSince(scope.base)).filter(pathMatcher(scope.paths));
   const tests = record.check.tests.map(({ file, name, criterion, command }) => ({
     file,
     name,

@@ -2,6 +2,8 @@
 // tests, the engine runs the red check and locks them, and the task gate
 // holds the Developer to the lock.
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BUILD_PIPELINE } from "../../src/build/index.js";
 import {
@@ -346,6 +348,39 @@ describe("the red check", () => {
       /passes before the code exists/,
     );
     expect(() => world.file("cart-total", "test-lock.json")).toThrow();
+  });
+});
+
+describe("a tests first round that waits for the Test engineer", () => {
+  it("keeps a commit that lands on the branch before the Test engineer's turn starts", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [{ match: "round 1 of", times: 2, error: "crash" }, testRound(1, RED_TEST)],
+      claude: [DEVELOPER],
+    });
+
+    await world.start("cart-total");
+    const waiting = await world.settle("cart-total");
+    expect(waiting).toMatchObject({ step: "tests_first", status: "waiting_escalation" });
+    const escalation = waiting.escalations.find((e) => e.status === "open");
+    expect(escalation).toMatchObject({ kind: "agent_call" });
+
+    // Another seat's message turn commits while the round waits for the seat.
+    writeFileSync(join(waiting.worktree, "NOTES.md"), "An answer from another seat.\n");
+    world.git(waiting.worktree, "add", "NOTES.md");
+    world.git(waiting.worktree, "commit", "-q", "-m", "docs: answer another seat");
+
+    await world.manager.resolve("cart-total", { escalation: escalation!.id, action: "retry" });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    const [round] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
+    expect(round?.check).toMatchObject({ passed: true, problems: [] });
+    expect(world.git(world.root, "show", "build/cart-total:NOTES.md")).toBe(
+      "An answer from another seat.",
+    );
+    const lock = JSON.parse(world.file("cart-total", "test-lock.json")) as SavedLock;
+    expect(lock.files.map((f) => f.path)).toEqual([TEST_FILE]);
+    expect(state.tasks[0]).toMatchObject({ status: "done" });
   });
 });
 
