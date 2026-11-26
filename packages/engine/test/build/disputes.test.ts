@@ -183,9 +183,12 @@ describe("a test dispute that waits for the Test engineer", () => {
     world.git(tree, "commit", "-q", "-m", "docs: answer another seat");
 
     await world.manager.resolve("cart-total", { escalation: escalation!.id, action: "retry" });
-    await world.waitFor("cart-total", () => lockOf(world).amendments?.length === 1);
+    // The engine writes the lock before it settles the dispute, so wait for both.
+    await world.waitFor(
+      "cart-total",
+      () => lockOf(world).amendments?.length === 1 && dispute(world, 1).outcome === "amended",
+    );
 
-    expect(dispute(world, 1)).toMatchObject({ outcome: "amended" });
     const amended = lockOf(world).amendments![0]!.commit;
     expect(world.git(tree, "show", "--name-only", "--format=", amended).trim()).toBe(TEST_FILE);
     expect(world.git(tree, "show", `${amended}:${TEST_FILE}`)).toBe(RIGHT_TEST.trim());
