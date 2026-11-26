@@ -638,6 +638,21 @@ describe("start, stop, restart", () => {
     await expect(h.core.boxes.start(box.id)).rejects.toMatchObject({ code: "box_running" });
   });
 
+  it.each([
+    [null, "didn't finish within 60 seconds"],
+    [137, "exited with status 137 and printed nothing"],
+  ])("names the cause when the start script fails silently (exit %s)", async (code, text) => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    await h.core.boxes.stop(box.id);
+    const exec = h.docker.exec.bind(h.docker);
+    h.docker.exec = (async (...a: Parameters<typeof exec>) =>
+      a[1].cmd[0] === START_SESSION_PATH
+        ? { exitCode: code, stdout: "", stderr: "" }
+        : exec(...a)) as typeof h.docker.exec;
+    await expect(h.core.boxes.start(box.id)).rejects.toThrow(text);
+  });
+
   it("stops by killing the session and syncs name, model, and effort", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({

@@ -314,8 +314,12 @@ export class UpgradeService {
         if (failure) throw new Error(failure);
         await withinDeadline(this.opts.core.boxes.start(box.id));
       } catch (err) {
-        reason = isGone(err) ? "The box no longer exists." : String((err as Error).message);
-        gone = isGone(err);
+        // A box whose session kept running, as on a retry that didn't
+        // recreate its container, is already where the restore would put it.
+        if ((err as { code?: unknown } | null)?.code !== "box_running") {
+          reason = isGone(err) ? "The box no longer exists." : String((err as Error).message);
+          gone = isGone(err);
+        }
       }
       report.boxes.push({ ...box, restored: reason === null, reason, ...(gone ? { gone } : {}) });
       if (reason === null || gone) {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { apiCoreOf } from "../../src/api/core-adapter.js";
+import { ApiError } from "../../src/records/errors.js";
 import { UpgradeService } from "../../src/setup/upgrade.js";
 import { makeHarness } from "../boxes/harness.js";
 import path from "node:path";
@@ -347,6 +348,25 @@ describe("upgrade recovery records", () => {
     const report = await service.start();
     expect(report.boxes.map((box) => box.id)).toEqual([old.id, fresh.id]);
     expect((await core.boxes.get(old.id)).status).toBe("running");
+  });
+
+  it("counts a box that kept running through a retry as restored", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
+    const core = apiCoreOf(h.core, {} as Docker);
+    core.boxes.start = async (id) => {
+      throw new ApiError("box_running", `${id} is already running.`);
+    };
+    const service = new UpgradeService({
+      core,
+      recordFile: path.join(h.home, "running.json"),
+      build: async () => "latest",
+      runs: () => [],
+      resume: async () => {},
+    });
+    const report = await service.start();
+    expect(report.boxes.map((b) => [b.id, b.restored, b.reason])).toEqual([[box.id, true, null]]);
+    expect((await service.prepare()).boxes).toEqual([]);
   });
 
   it("drops a deleted box and a deleted run from the record and reports them as gone", async () => {

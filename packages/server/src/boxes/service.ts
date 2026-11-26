@@ -445,7 +445,11 @@ export class BoxService {
         continue;
       }
       if (r.exitCode === 0) return;
-      lastError = (r.stderr || r.stdout).trim();
+      lastError =
+        (r.stderr || r.stdout).trim() ||
+        (r.exitCode === null
+          ? "the start script didn't finish within 60 seconds"
+          : `the start script exited with status ${r.exitCode} and printed nothing`);
       if (r.exitCode === 3)
         throw new ApiError("box_running", lastError || `Session ${session} is already running.`);
       const inspect = await this.deps.docker.inspectContainer(box.container);
