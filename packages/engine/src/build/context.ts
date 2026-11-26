@@ -225,6 +225,15 @@ export class BuildContext {
           this.state.status = "running";
           delete this.state.pausedUntil;
           delete this.state.pausedBy;
+          delete this.state.idle;
+          await this.persist();
+        },
+        held: async (held) => {
+          // Only a request or a box stop's pause shows as idle.
+          const idle = held && this.state.status === "paused" && this.state.pausedBy !== undefined;
+          if (idle === (this.state.idle === true)) return;
+          if (idle) this.state.idle = true;
+          else delete this.state.idle;
           await this.persist();
         },
       },
@@ -327,7 +336,7 @@ export class BuildContext {
       });
     });
     await write;
-    const shown = `${state.status}:${state.step}:${state.deletedAt ?? ""}`;
+    const shown = `${state.status}:${state.step}:${state.deletedAt ?? ""}:${state.idle ?? ""}`;
     if (this.announced === shown) return;
     this.announced = shown;
     await this.emit({
@@ -342,6 +351,7 @@ export class BuildContext {
         step: state.step,
         ...(this.plan.usageEstimate ? { usageEstimate: this.plan.usageEstimate } : {}),
         ...(state.deletedAt ? { deletedAt: state.deletedAt } : {}),
+        ...(state.idle ? { idle: true } : {}),
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
       },
@@ -384,6 +394,7 @@ export class BuildContext {
     if (status !== "paused") {
       delete this.state.pausedUntil;
       delete this.state.pausedBy;
+      delete this.state.idle;
     }
     await this.persist();
   }

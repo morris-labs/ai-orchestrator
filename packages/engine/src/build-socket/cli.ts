@@ -88,8 +88,9 @@ Requests:
   status    Print the state of build SLUG: its status, step, tasks, and
             escalations. For a build in planning, print its planning
             record: the seat calls, the meetings, and the frozen plan.
-  pause     Pause build SLUG. The engine finishes the agent call in
-            progress first.
+  pause     Pause build SLUG. The engine finishes the agent call or
+            gate in progress first; once nothing runs, status shows the
+            build as paused (idle), and the worktree holds still.
   resume    Resume build SLUG after a pause or a cancel.
   cancel    Cancel build SLUG. The engine stops every agent and the
             build's review run, and keeps the branch and the worktree.
@@ -489,7 +490,7 @@ function issueLines(details: unknown): string {
 /** The build's state as text for a person to read. */
 export function formatBuild(build: BuildState): string {
   const lines = [
-    `Build ${build.slug}: ${build.status}, step ${build.step}`,
+    `Build ${build.slug}: ${build.status}${build.idle ? " (idle)" : ""}, step ${build.step}`,
     `Title: ${build.title}`,
     `Branch: ${build.branch}`,
     `Worktree: ${build.worktree}`,

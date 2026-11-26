@@ -129,7 +129,11 @@ waits in `aio-build inbox SLUG`.
 
 Owner requests during execution map to requests:
 
-- Pause or continue: `aio-build pause SLUG`, `aio-build resume SLUG`.
+- Pause or continue: `aio-build pause SLUG`, `aio-build resume SLUG`. A
+  pause waits for the agent call or gate in progress. When nothing runs,
+  `aio-build status SLUG` shows `paused (idle)`, and the engine sends a
+  `build.changed` event with `idle: true`. Change the build's worktree by
+  hand only after that.
 - Cancel: `aio-build cancel SLUG`, only on the owner's explicit word.
 - What the agents said: `aio-build messages SLUG [--direct]`.
 - Owner posts that conflict with the plan: `aio-build decisions SLUG`.

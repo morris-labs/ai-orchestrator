@@ -139,6 +139,11 @@ export interface PauseStatus {
   pause(until: string | undefined): Promise<void>;
   /** Shows the caller as running again. */
   resume(): Promise<void>;
+  /**
+   * Shows whether a person's pause holds: a caller waits at a checkpoint,
+   * and no agent call runs. Called when that changes.
+   */
+  held?(held: boolean): Promise<void>;
 }
 
 /** Why a call moved to another vendor. */

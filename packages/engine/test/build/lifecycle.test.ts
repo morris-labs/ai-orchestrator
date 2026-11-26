@@ -107,6 +107,43 @@ describe("a box stop and start", () => {
   });
 });
 
+describe("a paused build", () => {
+  it("reports idle once the running turn ends and the drive holds, and a resume clears it", async () => {
+    const world = await buildWorld();
+    world.script({ claude: [{ ...SLOW_DEVELOPER, delayMs: 1500 }] });
+    await startIn(world, "cart-total", "box-a");
+    await agentStarted(world);
+
+    const paused = await world.manager.pause("cart-total");
+    expect(paused.status).toBe("paused");
+    expect(paused.idle).toBeUndefined();
+
+    const idle = await world.waitFor("cart-total", (s) => s.idle === true);
+    expect(idle.status).toBe("paused");
+    // The running turn finished before the build went idle.
+    expect(world.jsonFiles("cart-total", "calls")).toHaveLength(1);
+    const changes = world.events.ofType("build.changed") as { build: { idle?: boolean } }[];
+    expect(changes.at(-1)?.build).toMatchObject({ status: "paused", idle: true });
+    expect(world.file("cart-total", "STATUS.md")).toContain("- Status: paused (idle)");
+
+    const resumed = await world.manager.resume("cart-total");
+    expect(resumed.idle).toBeUndefined();
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+    expect(state.idle).toBeUndefined();
+  });
+
+  it("reports idle at once when no drive runs, as while it waits for an escalation", async () => {
+    const world = await buildWorld();
+    world.script({ claude: [{ match: "Task T1", times: 2, error: "crash" }] });
+    await startIn(world, "cart-total", "box-a");
+    const waiting = await world.settle("cart-total");
+    expect(waiting.status).toBe("waiting_escalation");
+
+    const paused = await world.manager.pause("cart-total");
+    expect(paused).toMatchObject({ status: "paused", idle: true });
+  });
+});
+
 describe("a box stop during a usage limit wait", () => {
   it("holds the build paused for the box until the box starts", async () => {
     const world = await buildWorld();

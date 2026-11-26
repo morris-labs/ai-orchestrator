@@ -92,6 +92,12 @@ export class AgentCalls {
   private cancelRequested = false;
   /** Every parallel call waits on the same gate while the caller is paused. */
   private pauseGate: { promise: Promise<void>; open: () => void } | null = null;
+  /** Callers that wait at a checkpoint for a person's pause to end. */
+  private parked = 0;
+  /** True from `beginDrive()` to `endDrive()`. */
+  private driving = false;
+  /** What `host.status.held()` last reported. */
+  private reportedHeld = false;
   /** Checks that read-only calls leave their worktree as they found it, one guard per worktree. */
   private readonly treeGuards = new Map<string, TreeGuard>();
 
@@ -133,6 +139,8 @@ export class AgentCalls {
   /** Lets held calls go on. */
   requestResume(): void {
     this.pauseRequested = false;
+    // The host clears what it shows when it resumes.
+    this.reportedHeld = false;
     const gate = this.pauseGate;
     this.pauseGate = null;
     gate?.open();
@@ -161,10 +169,36 @@ export class AgentCalls {
       // A person's pause has no end time, even when it follows a timed wait.
       await this.host.status.pause(undefined);
     }
-    await gate.promise;
+    this.parked += 1;
+    try {
+      await this.reportHeld();
+      await gate.promise;
+    } finally {
+      this.parked -= 1;
+    }
     this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (this.host.status.paused()) await this.host.status.resume();
+  }
+
+  /**
+   * Whether a person's pause holds the caller: its driver waits at a
+   * checkpoint for it or has ended, and no agent call runs.
+   */
+  get held(): boolean {
+    return this.pauseRequested && (this.parked > 0 || !this.driving) && this.inFlight.size === 0;
+  }
+
+  /** Tells the host when `held` changed since the last report. */
+  async reportHeld(): Promise<void> {
+    const held = this.held;
+    if (held === this.reportedHeld) return;
+    this.reportedHeld = held;
+    try {
+      await this.host.status.held?.(held);
+    } catch (error) {
+      this.deps.log?.warn("Could not show whether a pause holds", { error: String(error) });
+    }
   }
 
   /** Pauses the caller until `until` (ISO time), as a ceiling or a limit asks. */
@@ -236,6 +270,13 @@ export class AgentCalls {
     }
     if (this.abort.signal.aborted && !this.cancelRequested) this.abort = new AbortController();
     this.stopped = false;
+    this.driving = true;
+  }
+
+  /** Marks the driver as ended, so a person's pause holds once no call runs. */
+  async endDrive(): Promise<void> {
+    this.driving = false;
+    await this.reportHeld();
   }
 
   private throwIfStopped(): void {
@@ -508,7 +549,11 @@ export class AgentCalls {
       },
     );
     this.inFlight.add(call);
-    const done = () => this.inFlight.delete(call);
+    void this.reportHeld();
+    const done = () => {
+      this.inFlight.delete(call);
+      void this.reportHeld();
+    };
     call.then(done, done);
     return call;
   }

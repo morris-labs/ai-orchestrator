@@ -678,6 +678,13 @@ export const BuildStateSchema = z.object({
   pausedUntil: IsoDateTimeSchema.optional(),
   /** Who paused the build, while it is paused by a request or a box stop. */
   pausedBy: BuildPauseReasonSchema.optional(),
+  /**
+   * `true` while the build is paused and the pause holds: no agent call or
+   * gate runs, so the worktree stays as it is until a resume. Absent while
+   * the build runs, and while a paused build finishes its current agent
+   * call or gate.
+   */
+  idle: z.literal(true).optional(),
   /** The closing record of a cancelled build, relative to the build directory. */
   closingRecord: z.string().min(1).optional(),
   /**
