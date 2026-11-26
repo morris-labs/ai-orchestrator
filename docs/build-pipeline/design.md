@@ -531,6 +531,12 @@ A review run that ends clean with follow-ups counts as clean: it passed the
 same test as a clean run, with findings that no vendor would check. The pull
 request lists those findings for the owner to check before the merge.
 
+A confirmed `nit` never goes to the fixer and doesn't keep a run from ending
+clean, as in the review pipeline. So a build can reach release ready with
+confirmed nits in the code. The pull request lists them under **Review nits**,
+and the release ready digest names them, so the owner can fix or leave each
+one.
+
 ## Verification methods
 
 The Analyst gives each acceptance criterion one verification method, and the
