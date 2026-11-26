@@ -183,6 +183,34 @@ describe("the red check", () => {
     expect(lock.files).toEqual([{ path: TEST_FILE, sha256: sha256(RED_TEST) }]);
   });
 
+  it("sends back tests that fail the plan's lint command", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const unlinted = RED_TEST.replace("assert.equal(", "var unused = 1;\nassert.equal(");
+    world.script({
+      codex: [testRound(1, unlinted), testRound(2, RED_TEST)],
+      claude: [DEVELOPER],
+    });
+    const plan = cartPlan({
+      commands: {
+        ...cartPlan().commands,
+        lint: [{ command: "node lint.mjs" }, { command: `! grep -n "var " ${TEST_FILE}` }],
+      },
+    });
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    const [first, second] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
+    expect(first?.check?.problems).toEqual([
+      expect.stringMatching(
+        /lint command `! grep -n "var " test\/cart\.test\.mjs` fails[\s\S]*var unused/,
+      ),
+    ]);
+    expect(second?.check?.passed).toBe(true);
+    expect(world.calls()[1]?.prompt).toMatch(/lint command .* fails with the tests in place/);
+  });
+
   it("sends back a test without a criterion ID", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     const { criterion: _dropped, ...unnamed } = AC1_TEST;

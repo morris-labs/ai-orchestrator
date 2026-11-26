@@ -12,6 +12,9 @@ section's heading must have the form `## [X.Y.Z]`.
   `expect(received).toBeInTheDocument()` on a missing element, and a Testing
   Library query that finds no element as assertion failures. Before, it sent
   correct failing UI tests back to the Test engineer as errors.
+- Tests first runs the plan's type check and lint commands with the tests in
+  place, and sends back tests that fail them. Before, it locked such tests, and
+  every Developer's task gate then failed on files the Developer can't change.
 
 ## [3.2.3] - 2026-11-22
 
