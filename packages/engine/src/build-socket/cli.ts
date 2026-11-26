@@ -37,6 +37,7 @@ export const BUILD_USAGE = `Usage:
   aio-build plan SLUG SEAT BRIEF_FILE [--issue ISSUE] [--json]
   aio-build meet SLUG BRIEF_FILE [--members SEAT,...] [--proposer SEAT] [--rounds N] [--json]
   aio-build meeting-post SLUG MEETING POST_FILE [--json]
+  aio-build meeting-end SLUG MEETING [--json]
   aio-build freeze SLUG [PLAN_FILE] [--push yes|no] [--json]
   aio-build start SLUG [PLAN_FILE] [--base REF] [--json]
   aio-build status SLUG [--json]
@@ -73,6 +74,11 @@ Requests:
             Relay the owner's post in POST_FILE to meeting MEETING of build
             SLUG, such as meeting-1, while it runs. Every member reads it
             at its next turn.
+  meeting-end
+            End meeting MEETING of build SLUG early, such as once you froze
+            the plan it discusses. The engine stops the turn under way, and
+            the meeting ends as ended, with the major objections of its
+            last full round open. Planning then takes requests again.
   freeze    Freeze the build plan in PLAN_FILE, a JSON file ("-" reads
             standard input), or without PLAN_FILE the draft plan. A plan
             that changed since the last freeze becomes the next version in
@@ -216,6 +222,7 @@ export type BuildCommand =
       json: boolean;
     }
   | { kind: "meeting-post"; slug: string; meeting: string; postFile: string; json: boolean }
+  | { kind: "meeting-end"; slug: string; meeting: string; json: boolean }
   | { kind: "freeze"; slug: string; planFile: string | null; push: boolean | null; json: boolean }
   | { kind: "start"; slug: string; planFile: string | null; base: string | null; json: boolean }
   | { kind: "messages"; slug: string; direct: boolean; json: boolean }
@@ -236,6 +243,7 @@ export type BuildCommand =
         | "freeze"
         | "meet"
         | "meeting-post"
+        | "meeting-end"
         | "messages"
         | "decisions"
         | "inbox"
@@ -249,6 +257,7 @@ const KINDS = new Set([
   "plan",
   "meet",
   "meeting-post",
+  "meeting-end",
   "freeze",
   "start",
   "status",
@@ -449,6 +458,14 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
       throw new Error(`${meeting} isn't a meeting: name one such as meeting-1.`);
     }
     return { kind, slug, meeting, postFile: positional[2] as string, json };
+  }
+  if (kind === "meeting-end") {
+    if (positional.length !== 2) throw new Error("meeting-end needs SLUG and MEETING.");
+    const meeting = positional[1] as string;
+    if (!MeetingIdSchema.safeParse(meeting).success) {
+      throw new Error(`${meeting} isn't a meeting: name one such as meeting-1.`);
+    }
+    return { kind, slug, meeting, json };
   }
   if (kind === "freeze" || kind === "start") {
     if (positional.length > 2) throw new Error(`${kind} takes SLUG and at most one PLAN_FILE.`);
@@ -760,6 +777,8 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     };
   } else if (command.kind === "meeting-post") {
     body = { ...body, meeting: command.meeting, body: input };
+  } else if (command.kind === "meeting-end") {
+    body = { ...body, meeting: command.meeting };
   } else if (command.kind === "freeze" && command.push !== null) {
     body.push = command.push;
   } else if (command.kind === "start" && command.base !== null) {
@@ -787,7 +806,11 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     if (command.kind === "plan") {
       const answer = await client.send("plan", body);
       io.stdout(command.json ? json(answer) : formatSeatAnswer(answer));
-    } else if (command.kind === "meet" || command.kind === "meeting-post") {
+    } else if (
+      command.kind === "meet" ||
+      command.kind === "meeting-post" ||
+      command.kind === "meeting-end"
+    ) {
       const answer = await client.send(command.kind, body);
       io.stdout(command.json ? json(answer) : formatMeeting(answer));
     } else if (command.kind === "freeze") {

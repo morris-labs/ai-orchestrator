@@ -17,6 +17,7 @@ import {
   BUILD_SOCKET_SESSION_HEADERS,
   BuildSocketFreezeSchema,
   BuildSocketMeetSchema,
+  BuildSocketMeetingEndSchema,
   BuildSocketMeetingPostSchema,
   BuildSocketInboxSchema,
   BuildSocketMessagesSchema,
@@ -49,6 +50,7 @@ export interface BuildSocketOptions {
     | "freeze"
     | "meet"
     | "meetingPost"
+    | "meetingEnd"
     | "start"
     | "get"
     | "planning"
@@ -199,6 +201,11 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       const request = BuildSocketMeetingPostSchema.parse(raw);
       ownProject(request);
       return builds.meetingPost(request);
+    }
+    if (kind === "meeting-end") {
+      const request = BuildSocketMeetingEndSchema.parse(raw);
+      ownProject(request);
+      return builds.meetingEnd(request);
     }
     if (kind === "start") {
       const request = BuildSocketStartSchema.parse(raw);

@@ -86,9 +86,13 @@ The team path, in order:
 2. Architect: `aio-build plan SLUG architect BRIEF_FILE`. Show the
    milestones and the task graph.
 3. Critic: `aio-build meet SLUG BRIEF_FILE`, where the brief says what to
-   attack. When it ends, report the outcome (`agreed` or `round_cap`) and
-   every open objection to the owner before anything else. Relay owner
-   words to a running meeting with `aio-build meeting-post`.
+   attack. When it ends, report the outcome (`agreed`, `round_cap`, or
+   `ended`) and every open objection to the owner before anything else.
+   Relay owner words to a running meeting with `aio-build meeting-post`.
+   When the meeting's revisions no longer matter, such as once you froze
+   the plan or the owner settled the open points, end it with
+   `aio-build meeting-end SLUG MEETING`: the engine stops the turn under
+   way, and planning takes requests again.
 4. The engine drafts the plan in `planning/draft.json` and rewrites it after
    every seat answer, unless you edited it: then it keeps your edits and
    writes its own draft to `planning/draft.engine.json`. To change the plan

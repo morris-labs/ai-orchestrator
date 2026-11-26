@@ -305,6 +305,9 @@ and code takes the turns:
    (major or minor) for each point, and the reasons.
 3. The proposer revises. The meeting repeats until no major objection
    remains, or until it reaches its round cap, which defaults to three.
+   The Project manager can end the meeting earlier, such as once the plan
+   it discusses is frozen. The turn under way stops, and the major
+   objections of the last full round stay open.
 4. The Project manager reports the outcome and any open objections.
 
 The owner's posts in a meeting jump the queue. Every member reads them at its

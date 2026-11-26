@@ -2,7 +2,8 @@
 // the first proposal; each member replies once per round with a position and
 // a severity for each point; the proposer revises while a major objection
 // remains, until the round cap. An owner post reaches every member at its
-// next turn. See `docs/build-pipeline/design.md`, "Meetings".
+// next turn. The Project manager can end the meeting early, which stops the
+// turn under way. See `docs/build-pipeline/design.md`, "Meetings".
 //
 // Files in `.aio/builds/SLUG/`:
 //
@@ -52,6 +53,8 @@ export interface MeetingHost {
     /** Leaves this seat's earlier answer out of the planner's context, when the meeting shows it. */
     omit?: string;
     expected?: { name: string; schema: z.ZodTypeAny };
+    /** Stops the call when the Project manager ends the meeting. */
+    signal?: AbortSignal;
   }): Promise<{ file: string; answer: Record<string, unknown> }>;
   /** The latest answer of `seat` that keeps its schema, with its file. */
   latest(seat: string): Promise<{ file: string; answer: Record<string, unknown> } | undefined>;
@@ -88,6 +91,10 @@ export class Meeting {
   /** The record, which `post()` changes while a turn runs. */
   readonly record: BuildMeeting;
   private proposerVendor: Vendor | undefined;
+  /** Aborts when the Project manager ends the meeting early. */
+  private readonly ending = new AbortController();
+  /** The meeting's run, once it started. */
+  private running: Promise<BuildMeeting> | null = null;
 
   constructor(
     record: BuildMeeting,
@@ -97,7 +104,33 @@ export class Meeting {
   }
 
   /** Runs the meeting to its end and returns its record. Throws `EngineError` when it fails. */
-  async run(): Promise<BuildMeeting> {
+  run(): Promise<BuildMeeting> {
+    this.running ??= this.runRounds();
+    return this.running;
+  }
+
+  /**
+   * Ends a running meeting early: stops the turn under way, and ends the
+   * meeting as `ended` with the major objections of its last full round.
+   * Resolves with the record once the meeting has ended. Throws
+   * `EngineError` `conflict` once the meeting ended.
+   */
+  async endEarly(): Promise<BuildMeeting> {
+    const { record } = this;
+    if (record.status !== "running" || this.ending.signal.aborted) {
+      throw new EngineError("conflict", `Meeting ${record.id} ended: ${record.status}.`);
+    }
+    this.ending.abort();
+    if (!this.running) return this.end("ended", []);
+    try {
+      return await this.running;
+    } catch {
+      // The run recorded why it failed.
+      return structuredClone(record);
+    }
+  }
+
+  private async runRounds(): Promise<BuildMeeting> {
     const { record, host } = this;
     try {
       const proposer = host.role(record.proposer);
@@ -115,16 +148,22 @@ export class Meeting {
           brief: record.brief,
           context: this.postsContext().text,
           ...this.expectedOf(record.proposer),
+          signal: this.ending.signal,
         });
       }
       for (let n = 1; ; n++) {
+        if (this.ending.signal.aborted) return await this.endedEarly();
         record.rounds.push({ n, proposal: proposal.file, turns: [] });
         await host.save(record);
         await this.announce(proposal.file, n);
-        for (const m of members) await this.reply(n, m.seat, m.role, proposal.answer);
+        for (const m of members) {
+          if (this.ending.signal.aborted) return await this.endedEarly();
+          await this.reply(n, m.seat, m.role, proposal.answer);
+        }
         const open = majorObjections(this.turns(n));
         if (open.length === 0) return await this.end("agreed", []);
         if (n >= record.roundCap) return await this.end("round_cap", open);
+        if (this.ending.signal.aborted) return await this.endedEarly();
         proposal = await host.turn({
           seat: record.proposer,
           role: proposer,
@@ -132,9 +171,12 @@ export class Meeting {
           brief: this.revisionBrief(n, open),
           context: [this.repliesContext(), ...this.postsContext().text],
           ...this.expectedOf(record.proposer),
+          signal: this.ending.signal,
         });
       }
     } catch (error) {
+      // A turn that the end stopped isn't a failure.
+      if (this.ending.signal.aborted) return await this.endedEarly();
       record.status = "failed";
       record.error = error instanceof Error ? error.message : String(error);
       record.finishedAt = host.now();
@@ -230,6 +272,7 @@ export class Meeting {
             : `${brief}\n\nYour last reply broke the structure: ${broke}. Reply again with position (object, concern, or no_objection), summary, and points, where each point has severity (major or minor), point, and reason.`,
         context,
         omit: record.proposer,
+        signal: this.ending.signal,
       });
       turn.files.push(answer.file);
       const parsed = MeetingReplySchema.safeParse(answer.answer);
@@ -334,8 +377,26 @@ export class Meeting {
     }
   }
 
+  /**
+   * Ends the meeting at the Project manager's request. A turn that the end
+   * cut off shows as failed, and the open objections are the major points
+   * of the last round in which every member replied.
+   */
+  private async endedEarly(): Promise<BuildMeeting> {
+    for (const round of this.record.rounds) {
+      for (const turn of round.turns) if (turn.status === "running") turn.status = "failed";
+    }
+    const full = this.record.rounds.filter((round) =>
+      this.record.members.every((seat) =>
+        round.turns.some((t) => t.seat === seat && t.status === "done"),
+      ),
+    );
+    const last = full.at(-1);
+    return this.end("ended", last ? majorObjections(this.turns(last.n)) : []);
+  }
+
   private async end(
-    status: "agreed" | "round_cap",
+    status: "agreed" | "round_cap" | "ended",
     open: MeetingObjection[],
   ): Promise<BuildMeeting> {
     const { record, host } = this;

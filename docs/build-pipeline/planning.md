@@ -105,6 +105,20 @@ aio-build meeting-post SLUG MEETING POST_FILE
 Replace `MEETING` with the meeting's ID, such as `meeting-1`. Every member
 reads the post at its next turn, ahead of every other input.
 
+To end a running meeting early, such as once you froze the plan it
+discusses, run the following command:
+
+```bash
+aio-build meeting-end SLUG MEETING
+
+```
+
+The engine stops the turn under way and ends the meeting as `ended`, with
+the major objections of its last full round, the last round in which every
+member replied, as its open objections. The command returns once the
+meeting has ended, and planning then takes requests again, such as the
+start.
+
 ## Freeze the build plan
 
 When the owner approves the plan, ask the owner whether the build can push

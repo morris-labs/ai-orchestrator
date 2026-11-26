@@ -273,6 +273,19 @@ describe("the build socket", () => {
     expect(builds.meetingPost).toHaveBeenCalledWith(request);
   });
 
+  it("ends a meeting early", async () => {
+    const { builds, path } = await open();
+    const request = {
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      meeting: "meeting-1",
+    };
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES["meeting-end"], request);
+    expect(res.status).toBe(200);
+    expect(builds.meetingEnd).toHaveBeenCalledWith(request);
+  });
+
   it("refuses planning requests for another project", async () => {
     const { builds, path } = await open("proj-1");
     const ask = { projectId: "proj-2", boxId: null, slug: "cart-total" };
@@ -288,13 +301,18 @@ describe("the build socket", () => {
       meeting: "meeting-1",
       body: "Cents.",
     });
-    for (const res of [plan, freeze, meet, post]) {
+    const end = await send(path, "POST", BUILD_SOCKET_ROUTES["meeting-end"], {
+      ...ask,
+      meeting: "meeting-1",
+    });
+    for (const res of [plan, freeze, meet, post, end]) {
       expect(res).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
     }
     expect(builds.plan).not.toHaveBeenCalled();
     expect(builds.freeze).not.toHaveBeenCalled();
     expect(builds.meet).not.toHaveBeenCalled();
     expect(builds.meetingPost).not.toHaveBeenCalled();
+    expect(builds.meetingEnd).not.toHaveBeenCalled();
   });
 
   it("answers a status request for a build in planning with its planning record", async () => {

@@ -251,8 +251,8 @@ _Avoid_: Inbox, feed, context
 
 **Meeting**:
 A turn-based discussion of one proposal, which ends when no
-invited role holds a major objection or when the meeting reaches its round
-cap.
+invited role holds a major objection, when the meeting reaches its round
+cap, or when the Project manager ends it early.
 _Avoid_: Discussion, standup, review
 
 ### Testing

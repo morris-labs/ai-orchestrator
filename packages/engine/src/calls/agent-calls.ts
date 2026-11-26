@@ -706,13 +706,15 @@ export class AgentCalls {
               : await this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort);
         } catch (error) {
           const elapsedMs = Math.max(0, this.clock.now() - started);
-          const limit = this.signal.aborted ? null : adapter.detectLimit(error);
+          // The caller's cancel, or this call's own stop.
+          const stopped = this.signal.aborted || spec.signal?.aborted === true;
+          const limit = stopped ? null : adapter.detectLimit(error);
           // A failed or limited call can still hold the vendor's freshest reading.
           for (const { ceiling: _ignored, ...sample } of usageOfError(error)) {
             const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
             await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });
           }
-          const outcome = this.signal.aborted
+          const outcome = stopped
             ? "cancelled"
             : limit
               ? "limited"
@@ -864,12 +866,16 @@ export class AgentCalls {
     // One listener per call, removed in `finally`, so a long caller doesn't
     // pile listeners onto its signal.
     const signal = this.signal;
+    const own = spec.signal;
     const onAbort = () => {
-      controller.abort(signal.reason);
+      controller.abort(signal.aborted ? signal.reason : own?.reason);
       rejectAborted(new RunCancelled());
     };
-    if (signal.aborted) onAbort();
-    else signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted || own?.aborted) onAbort();
+    else {
+      signal.addEventListener("abort", onAbort, { once: true });
+      own?.addEventListener("abort", onAbort, { once: true });
+    }
     let timer: NodeJS.Timeout | undefined;
     const guard = new Promise<never>((_, reject) => {
       // The adapter enforces the timeout; this guard catches an adapter that doesn't.
@@ -898,6 +904,7 @@ export class AgentCalls {
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
+      own?.removeEventListener("abort", onAbort);
     }
   }
 }

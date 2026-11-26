@@ -50,6 +50,11 @@ export interface AgentCallSpec {
   /** Move to another vendor when this one hits its limit. */
   allowFallback?: boolean;
   /**
+   * Stops this call alone, such as a meeting turn that the Project manager
+   * ended. The call throws `RunCancelled`, as for the caller's cancel.
+   */
+  signal?: AbortSignal;
+  /**
    * Vendors that must not take this call, such as the finding's reporter for
    * a disprover. A limit fallback skips them, and a server grant that
    * redirects to one stops the call for a decision instead.
