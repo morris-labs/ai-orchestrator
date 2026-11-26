@@ -84,8 +84,13 @@ same task amended as the Developer's change.
 
 ## Resolve a dispute escalation
 
-- **Ruled on:** resolve with `clarify` and a note, which the Developer's next
-  try reads, or with `retry` to keep the test as it is locked.
+- **Ruled on:** resolve with `clarify` and the ruling, or with `retry` to keep
+  the test as it is locked. The engine gives a `clarify` ruling to the Test
+  engineer, the only seat that can change a locked test. The Test engineer
+  applies it to the disputed file and answers `amend` or `reject`, and the
+  amendment goes through the red check and the lock like any other. The
+  Developer's next try reads the ruling too. A ruling can change only the
+  disputed file.
 - **Escalated:** the owner resolves with `changes` that include `criteria`
   to accept the fix. The engine then applies the saved patch, runs the red
   check, and locks the fix. A resolution without `criteria` keeps the locked

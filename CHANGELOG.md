@@ -18,6 +18,11 @@ section's heading must have the form `## [X.Y.Z]`.
 - Tests first sends back a test whose criterion the task that lists its file
   doesn't cover, and names the test files of the tasks that do. Before, such a
   test failed that task's gate until a later task wrote the code it tests.
+- A Project manager's `clarify` ruling on a test dispute reaches the locked
+  test: the Test engineer applies it to the disputed file, and the engine
+  checks and locks the fix. Before, only the Developer read the ruling, and the
+  gate put back any change it made to the locked test, so a ruling against a
+  test couldn't take effect.
 
 ## [3.2.3] - 2026-11-22
 

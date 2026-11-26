@@ -8,7 +8,10 @@
 //   commits it, locks it again, and records the amendment in the lock.
 // - Rejected: the Test engineer answers with its reason, and the test stands.
 // - Ruled on: a second dispute about one test, or a third in one task, goes
-//   to the Project manager as an escalation.
+//   to the Project manager as an escalation. A `clarify` ruling goes to the
+//   Test engineer, who applies it to the test, so a ruling against a locked
+//   test can change it; the Developer reads the ruling too. A `retry` keeps
+//   the test as it is locked.
 // - Escalated: an amendment that changes what a criterion means goes to the
 //   owner. The engine saves the amendment as a patch, and locks it only when
 //   the owner's resolution changes the criteria.
@@ -89,6 +92,8 @@ export interface DisputeRecord {
   amendment?: string;
   /** The escalation that took the dispute, for `ruled` and `escalated`. */
   escalation?: string;
+  /** The Project manager's `clarify` ruling, which the Test engineer applies to the test. */
+  ruling?: string;
   outcome?: DisputeOutcome;
   /** Why the dispute ended the way it did, for the Developer's next try. */
   note?: string;
@@ -249,7 +254,7 @@ async function ruling(ctx: BuildContext, record: DisputeRecord): Promise<Escalat
     taskId: record.taskId,
     summary: `Task ${record.taskId} disputes ${record.test} again: ${why}, so the Project manager rules on it.`,
     details: [
-      `Rule on the dispute. Resolve with clarify and a note that the Developer reads, or with retry to keep the test as it is. A ruling that changes what a criterion means is the owner's.`,
+      `Rule on the dispute. Resolve with clarify and the ruling: the Test engineer applies it to the test, and the Developer reads it. Resolve with retry to keep the test as it is. A ruling that changes what a criterion means is the owner's.`,
       "",
       "Disputes:",
       history(record, [...new Set([...sameTest, ...sameTask])]),
@@ -314,6 +319,14 @@ function roleTask(
       "",
       untrusted(record.reason || "No reason given."),
       "",
+      ...(record.ruling
+        ? [
+            "The Project manager ruled on the dispute. Apply the ruling to the test: change the file as the ruling says and answer amend, or answer reject when the ruling keeps the test as it is. The ruling follows.",
+            "",
+            untrusted(record.ruling),
+            "",
+          ]
+        : []),
       "The locked tests in the file:",
       ...locked.map((t) => `- ${t.name} (${t.criterion}): \`${t.command}\``),
       "",
@@ -524,7 +537,16 @@ export async function settleDispute(
     if (record.outcome === "escalated" && escalation && lock) {
       await afterOwner(ctx, task, record, escalation, lock);
     }
-    return "settled";
+    const ruled = escalation?.resolution;
+    if (record.outcome !== "ruled" || ruled?.action !== "clarify" || !ruled.note || !lock) {
+      return "settled";
+    }
+    // The ruling goes to the Test engineer, the only seat that can change a locked test.
+    record.ruling = ruled.note;
+    delete record.outcome;
+    delete record.note;
+    delete record.settledAt;
+    await save(ctx, record);
   }
   if (!lock) {
     await settle(
@@ -544,7 +566,7 @@ export async function settleDispute(
     );
     return "settled";
   }
-  const ruled = await ruling(ctx, record);
+  const ruled = record.ruling === undefined ? await ruling(ctx, record) : null;
   if (ruled) {
     const escalation = await ctx.escalate(ruled);
     record.escalation = escalation.id;
