@@ -60,6 +60,30 @@ export function pickResponse(cli, scenario, prompt) {
   });
 }
 
+/**
+ * Adds `turn` ({ input, output }) to session `id`'s running total in the
+ * state file and returns the new total. Without a state file, the total is
+ * the turn alone. The total stays in the state file, not in a vendor folder,
+ * so a test never writes into the account folder its environment names.
+ */
+export function addSessionTotal(cli, scenario, id, turn) {
+  const statePath = statePathFor(scenario.path);
+  if (!statePath) return { ...turn };
+  return withLock(scenario.path, () => {
+    const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+    const key = `${cli}:sessions`;
+    const sessions = state[key] ?? {};
+    const prior = sessions[id] ?? { input: 0, output: 0 };
+    const total = { input: prior.input + turn.input, output: prior.output + turn.output };
+    sessions[id] = total;
+    state[key] = sessions;
+    const tmp = `${statePath}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(state));
+    renameSync(tmp, statePath);
+    return total;
+  });
+}
+
 /** Appends one line describing this invocation to `MOCK_CLI_LOG`, when set. */
 export function logCall(cli, entry) {
   const path = process.env.MOCK_CLI_LOG;

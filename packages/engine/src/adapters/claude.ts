@@ -1,7 +1,7 @@
 // The Claude adapter: `claude -p` with `--output-format stream-json`. Flags
 // and output shapes follow the Claude Code headless documentation, checked
 // against Claude Code 2.1.310.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UsageSample, UsageWindow } from "@aio/contracts";
@@ -139,9 +139,14 @@ export interface ClaudeStreamSummary {
   toolErrors?: string[];
 }
 
+/** How many sessions' running totals an adapter keeps. */
+const MAX_SESSION_TOTALS = 500;
+
 export class ClaudeAdapter extends CliAdapter {
   readonly vendor = "claude" as const;
   private readonly claudeOptions: ClaudeAdapterOptions;
+  /** The running total of each session this adapter called, by session ID. */
+  private readonly sessionTotals = new Map<string, Required<TokenCounts>>();
 
   constructor(options: ClaudeAdapterOptions = {}) {
     super(options);
@@ -213,6 +218,9 @@ export class ClaudeAdapter extends CliAdapter {
   }
 
   protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
+    // A resumed session's `modelUsage` covers the whole session, so the
+    // adapter needs the total from before this call to record the turn alone.
+    const before = req.sessionId ? this.totalBefore(req.sessionId, req) : undefined;
     const parser = new ClaudeStreamParser(this.accountFor(req), this.ceiling);
     const credentials = await credentialsFor(`vendor:${this.vendor}`, this.command);
     // The bus's config holds the agent's token, so it goes in a file only
@@ -245,7 +253,7 @@ export class ClaudeAdapter extends CliAdapter {
     const summary = parser.summary();
     const failure = this.processFailure(result, req);
     if (failure) throw failure;
-    return this.interpret(
+    const out = this.interpret(
       req,
       summary,
       result.stdout,
@@ -253,6 +261,27 @@ export class ClaudeAdapter extends CliAdapter {
       result.exitCode,
       result.durationMs,
     );
+    if (!out.sessionId || !summary.result || !hasModelUsage(summary.result)) return out;
+    const total = { ...out.tokens } as Required<TokenCounts>;
+    this.sessionTotals.delete(out.sessionId);
+    this.sessionTotals.set(out.sessionId, total);
+    if (this.sessionTotals.size > MAX_SESSION_TOTALS) {
+      const oldest = this.sessionTotals.keys().next().value;
+      if (oldest !== undefined) this.sessionTotals.delete(oldest);
+    }
+    return before ? { ...out, tokens: tokensSince(total, before) } : out;
+  }
+
+  /**
+   * Session `id`'s running total before a call that resumes it: the total
+   * this adapter last saw, or, after an engine restart, the total of the
+   * session's transcript in the call's config folder.
+   */
+  private totalBefore(id: string, req: CliRequest<unknown>): Required<TokenCounts> | undefined {
+    const known = this.sessionTotals.get(id);
+    if (known) return known;
+    const projects = join(this.configDir(req) ?? join(homedir(), ".claude"), "projects");
+    return claudeTranscriptTotals(sessionTranscriptFiles(projects, id));
   }
 
   /** Builds the result or the error from a finished stream. Exposed for fixture tests. */
@@ -551,6 +580,104 @@ export function claudeTokens(
 
 function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** Whether a result line carries `modelUsage`, the session's running total. */
+function hasModelUsage(result: Record<string, unknown>): boolean {
+  const usage = result.modelUsage;
+  return usage !== null && typeof usage === "object" && Object.keys(usage).length > 0;
+}
+
+/** The change from `before` to `total`, never below zero. */
+export function tokensSince(
+  total: Required<TokenCounts>,
+  before: Required<TokenCounts>,
+): Required<TokenCounts> {
+  const since = (key: keyof TokenCounts) => Math.max(0, total[key] - before[key]);
+  return {
+    input: since("input"),
+    output: since("output"),
+    fresh: since("fresh"),
+    cacheWrite: since("cacheWrite"),
+    cacheRead: since("cacheRead"),
+  };
+}
+
+function names(dir: string): string[] {
+  try {
+    return readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The transcripts of session `id` under a Claude Code `projects` folder: its
+ * `ID.jsonl` file in any working directory folder, and its subagents'.
+ */
+export function sessionTranscriptFiles(projects: string, id: string): string[] {
+  const files: string[] = [];
+  for (const folder of names(projects)) {
+    const dir = join(projects, folder);
+    if (!names(dir).includes(`${id}.jsonl`)) continue;
+    files.push(join(dir, `${id}.jsonl`));
+    const subagents = join(dir, id, "subagents");
+    for (const name of names(subagents)) {
+      if (name.endsWith(".jsonl")) files.push(join(subagents, name));
+    }
+  }
+  return files;
+}
+
+/**
+ * The tokens that `files` record, each model response counted once by its
+ * message ID, or `undefined` when they record none. Claude Code writes a
+ * line for each content block of a response, each with the response's usage.
+ */
+export function claudeTranscriptTotals(
+  files: readonly string[],
+): Required<TokenCounts> | undefined {
+  const responses = new Map<string, Required<TokenCounts>>();
+  for (const file of files) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      if (!line.includes('"usage"')) continue;
+      let entry: Record<string, unknown>;
+      try {
+        entry = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const message = entry.message as Record<string, unknown> | undefined;
+      const usage = message?.usage as Record<string, unknown> | undefined;
+      if (entry.type !== "assistant" || !message || !usage) continue;
+      if (message.model === "<synthetic>" || typeof message.id !== "string") continue;
+      const fresh = num(usage.input_tokens);
+      const cacheWrite = num(usage.cache_creation_input_tokens);
+      const cacheRead = num(usage.cache_read_input_tokens);
+      const counts = {
+        input: fresh + cacheWrite + cacheRead,
+        output: num(usage.output_tokens),
+        fresh,
+        cacheWrite,
+        cacheRead,
+      };
+      // Lines of one response can differ while it streams: keep the largest.
+      const seen = responses.get(message.id);
+      responses.set(message.id, seen && seen.output > counts.output ? seen : counts);
+    }
+  }
+  if (responses.size === 0) return undefined;
+  const total = { input: 0, output: 0, fresh: 0, cacheWrite: 0, cacheRead: 0 };
+  for (const r of responses.values()) {
+    for (const key of Object.keys(total) as Array<keyof typeof total>) total[key] += r[key];
+  }
+  return total;
 }
 
 const lastAccount = new Map<string, string>();
