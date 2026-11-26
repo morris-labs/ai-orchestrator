@@ -582,6 +582,7 @@ export class AgentCalls {
     let malformed = false;
     for (;;) {
       vendor = await this.routeAroundLimits(spec, vendor);
+      host.observer?.leasing?.(spec, vendor);
       const lease = await this.acquireLease(
         vendor,
         spec.role,
