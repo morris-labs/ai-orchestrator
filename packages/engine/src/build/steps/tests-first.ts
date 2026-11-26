@@ -5,6 +5,8 @@
 //
 // - Each test names a criterion of the plan, and its file mentions that ID.
 // - Each criterion with a test verification has at least one test.
+// - A test in a file that a task lists checks one of that task's criteria,
+//   so the task that must make it pass owns the code it tests.
 // - The red check: each test fails on an assertion against the stubs.
 // - The plan's type check and lint commands pass with the tests in place,
 //   except where they fail only as they did at preflight. A Developer can't
@@ -29,6 +31,7 @@ import type { BuildContext } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
 import { checkFailsOnlyOnBaseline, loadBaseline } from "../baseline.js";
 import { outsideWritable } from "../gate.js";
+import { pathMatcher } from "../paths.js";
 import { runGateCommand } from "../../gate/gate.js";
 import { runRedCheck, type ListedTest, type RedCheck } from "../red-check.js";
 import { setupNote, testEnvironmentNote } from "../test-command.js";
@@ -222,6 +225,19 @@ async function checkRound(
     }
     if (!content.includes(criterion)) {
       problems.push(`${named}: the file doesn't mention criterion ID ${criterion}.`);
+      continue;
+    }
+    const owners = ctx.plan.tasks.filter((task) => pathMatcher(task.tests)(file));
+    if (owners.length > 0 && !owners.some((task) => task.criteria.includes(criterion))) {
+      const ownersText = owners
+        .map((task) => `task ${task.id}, which covers ${task.criteria.join(", ")}`)
+        .join(", and ");
+      const homes = unique(
+        ctx.plan.tasks.filter((task) => task.criteria.includes(criterion)).flatMap((t) => t.tests),
+      );
+      problems.push(
+        `${named} checks criterion ${criterion}, but ${file} belongs to ${ownersText}. That task can't make it pass. Move the test to a test file of a task that covers ${criterion}${homes.length > 0 ? `: ${homes.join(", ")}` : ""}.`,
+      );
       continue;
     }
     listed.push({ file, name, criterion, command });

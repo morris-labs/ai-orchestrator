@@ -15,6 +15,9 @@ section's heading must have the form `## [X.Y.Z]`.
 - Tests first runs the plan's type check and lint commands with the tests in
   place, and sends back tests that fail them. Before, it locked such tests, and
   every Developer's task gate then failed on files the Developer can't change.
+- Tests first sends back a test whose criterion the task that lists its file
+  doesn't cover, and names the test files of the tasks that do. Before, such a
+  test failed that task's gate until a later task wrote the code it tests.
 
 ## [3.2.3] - 2026-11-22
 

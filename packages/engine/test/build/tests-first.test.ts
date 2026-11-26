@@ -211,6 +211,70 @@ describe("the red check", () => {
     expect(world.calls()[1]?.prompt).toMatch(/lint command .* fails with the tests in place/);
   });
 
+  it("sends back a test in a file of a task that doesn't cover its criterion", async () => {
+    const otherFile = "test/one-item.test.mjs";
+    const both = `${RED_TEST}// AC2: one item totals its price.\n`;
+    const ac2Test: TestEntry = {
+      file: TEST_FILE,
+      name: "AC2: one item totals its price",
+      criterion: "AC2",
+      command: RUN_TEST,
+    };
+    const ac2Red = [
+      "// AC2: one item totals its price.",
+      'import assert from "node:assert/strict";',
+      'import { total } from "../src/cart.mjs";',
+      "assert.equal(total([{ price: 4 }]), 4);",
+      "",
+    ].join("\n");
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        testRound(1, both, [AC1_TEST, ac2Test]),
+        {
+          match: "round 2 of",
+          output: {
+            summary: "Moved the AC2 test.",
+            tests: [AC1_TEST, { ...ac2Test, file: otherFile, command: `node ${otherFile}` }],
+          },
+          writeFiles: { [TEST_FILE]: RED_TEST, [otherFile]: ac2Red },
+        },
+      ],
+      claude: [DEVELOPER],
+    });
+    const base = cartPlan();
+    const plan = cartPlan({
+      criteria: [
+        { id: "AC1", text: "The cart reports the sum of its item prices." },
+        { id: "AC2", text: "One item totals its price." },
+      ],
+      tasks: [
+        ...base.tasks,
+        {
+          id: "T2",
+          title: "One-item total",
+          description: "Check the total of one item.",
+          ownedFiles: ["src/one-item.mjs"],
+          criteria: ["AC2"],
+          tests: [otherFile],
+        },
+      ],
+    });
+
+    await world.start("cart-total", plan);
+    await world.settle("cart-total");
+
+    const [first, second] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
+    expect(first?.check?.problems).toEqual([
+      expect.stringMatching(
+        /checks criterion AC2, but test\/cart\.test\.mjs belongs to task T1, which covers AC1\. .*test\/one-item\.test\.mjs/,
+      ),
+      "Criterion AC2 has no test.",
+    ]);
+    expect(second?.check?.passed).toBe(true);
+    expect(world.calls()[1]?.prompt).toMatch(/That task can't make it pass/);
+  });
+
   it("sends back a test without a criterion ID", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     const { criterion: _dropped, ...unnamed } = AC1_TEST;
