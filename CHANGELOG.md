@@ -11,6 +11,9 @@ section's heading must have the form `## [X.Y.Z]`.
 - A box whose session start script timed out or exited without output
   reported "Could not start the session: unknown error." The error now says
   whether the script timed out or which status it exited with.
+- A retry of a failed upgrade (`sudo dpkg --configure -a`) failed again
+  because it reported each box whose session kept running as "already
+  running" instead of restored.
 
 ## [3.3.0] - 2026-11-26
 
