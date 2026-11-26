@@ -75,6 +75,25 @@ function usageOfError(error: unknown): UsageSample[] {
 }
 
 /**
+ * The tokens a failed call spent before it failed, from the adapter's
+ * error, or none when the adapter couldn't tell.
+ */
+function tokensOfError(error: unknown): LeaseActual["tokens"] {
+  const tokens = (error as { tokens?: Record<string, unknown> } | null)?.tokens;
+  if (!tokens || typeof tokens.input !== "number" || typeof tokens.output !== "number")
+    return { in: 0, out: 0 };
+  const extra = (key: "fresh" | "cacheWrite" | "cacheRead") =>
+    typeof tokens[key] === "number" ? { [key]: tokens[key] } : {};
+  return {
+    in: tokens.input,
+    out: tokens.output,
+    ...extra("fresh"),
+    ...extra("cacheWrite"),
+    ...extra("cacheRead"),
+  };
+}
+
+/**
  * Makes agent calls for one caller, such as a review run or a build. One
  * instance per caller: it holds the caller's abort signal, pause gate, and
  * calls in progress.
@@ -674,16 +693,18 @@ export class AgentCalls {
               : error instanceof CallTimeout
                 ? "timeout"
                 : "error";
+          // A failed call still spent what it used before it failed.
+          const spent: LeaseActual = { ...ZERO_USE, tokens: tokensOfError(error) };
           await host.emit({
             type: "agent.finished",
             ...common,
             outcome,
             elapsedMs,
-            tokens: { in: 0, out: 0 },
+            tokens: spent.tokens,
             premiumRequests: 0,
             costEstimate: 0,
           });
-          await settleLease(ZERO_USE);
+          await settleLease(spent);
           if (outcome === "cancelled") throw new RunCancelled();
           log?.warn("An agent call failed", {
             runId: host.id,

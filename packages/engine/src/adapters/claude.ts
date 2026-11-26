@@ -137,6 +137,12 @@ export interface ClaudeStreamSummary {
   badLines: number;
   /** The text of each `tool_result` block marked `is_error`, cut to its last 300 characters. */
   toolErrors?: string[];
+  /**
+   * The tokens of this call's model responses in the stream, each counted
+   * once, or `undefined` when the stream showed none. A call that stops
+   * before its result line has only these.
+   */
+  streamTokens?: Required<TokenCounts>;
 }
 
 /** How many sessions' running totals an adapter keeps. */
@@ -251,25 +257,54 @@ export class ClaudeAdapter extends CliAdapter {
       if (dir) rmSync(dir, { recursive: true, force: true });
     }
     const summary = parser.summary();
+    // A failed call spent tokens too, so the error carries what it spent.
+    const spent = (error: unknown): unknown => {
+      if (error instanceof AdapterError)
+        error.tokens = this.turnTokens(summary, before, req) ?? summary.streamTokens;
+      return error;
+    };
     const failure = this.processFailure(result, req);
-    if (failure) throw failure;
-    const out = this.interpret(
-      req,
-      summary,
-      result.stdout,
-      result.stderr,
-      result.exitCode,
-      result.durationMs,
-    );
-    if (!out.sessionId || !summary.result || !hasModelUsage(summary.result)) return out;
-    const total = { ...out.tokens } as Required<TokenCounts>;
-    this.sessionTotals.delete(out.sessionId);
-    this.sessionTotals.set(out.sessionId, total);
-    if (this.sessionTotals.size > MAX_SESSION_TOTALS) {
-      const oldest = this.sessionTotals.keys().next().value;
-      if (oldest !== undefined) this.sessionTotals.delete(oldest);
+    if (failure) throw spent(failure);
+    let out: CliResult<T>;
+    try {
+      out = this.interpret(
+        req,
+        summary,
+        result.stdout,
+        result.stderr,
+        result.exitCode,
+        result.durationMs,
+      );
+    } catch (error) {
+      throw spent(error);
     }
-    return before ? { ...out, tokens: tokensSince(total, before) } : out;
+    return { ...out, tokens: this.turnTokens(summary, before, req) ?? out.tokens };
+  }
+
+  /**
+   * The tokens of this call alone. A result's `modelUsage` covers the whole
+   * session, so the adapter saves it as the session's total and subtracts
+   * the total from `before`. `undefined` when the result has no
+   * `modelUsage`, whose `usage` covers this call only.
+   */
+  private turnTokens(
+    summary: ClaudeStreamSummary,
+    before: Required<TokenCounts> | undefined,
+    req: CliRequest<unknown>,
+  ): Required<TokenCounts> | undefined {
+    const res = summary.result;
+    if (!res || !hasModelUsage(res)) return undefined;
+    const total = claudeTokens(res, summary.model ?? req.model ?? null).tokens;
+    const id = summary.sessionId ?? req.sessionId;
+    if (id) {
+      this.sessionTotals.delete(id);
+      this.sessionTotals.set(id, total);
+      if (this.sessionTotals.size > MAX_SESSION_TOTALS) {
+        const oldest = this.sessionTotals.keys().next().value;
+        if (oldest !== undefined) this.sessionTotals.delete(oldest);
+      }
+    }
+    return before ? tokensSince(total, before) : total;
   }
 
   /**
@@ -389,6 +424,8 @@ export class ClaudeStreamParser {
   private result: Record<string, unknown> | null = null;
   private badLines = 0;
   private readonly toolErrors: string[] = [];
+  /** Each model response's tokens, by message ID. */
+  private readonly responses = new Map<string, Required<TokenCounts>>();
 
   constructor(
     private readonly account: string,
@@ -419,6 +456,7 @@ export class ClaudeStreamParser {
         const message = event.message as Record<string, unknown> | undefined;
         if (typeof message?.model === "string" && message.model !== "<synthetic>")
           this.model = message.model;
+        if (message) noteResponse(this.responses, message);
         if (typeof event.error === "string") {
           this.apiError = event.error;
           this.apiErrorText = assistantText(message);
@@ -450,6 +488,7 @@ export class ClaudeStreamParser {
       result: this.result,
       badLines: this.badLines,
       toolErrors: [...this.toolErrors],
+      ...(this.responses.size > 0 ? { streamTokens: sumCounts(this.responses.values()) } : {}),
     };
   }
 
@@ -654,28 +693,42 @@ export function claudeTranscriptTotals(
         continue;
       }
       const message = entry.message as Record<string, unknown> | undefined;
-      const usage = message?.usage as Record<string, unknown> | undefined;
-      if (entry.type !== "assistant" || !message || !usage) continue;
-      if (message.model === "<synthetic>" || typeof message.id !== "string") continue;
-      const fresh = num(usage.input_tokens);
-      const cacheWrite = num(usage.cache_creation_input_tokens);
-      const cacheRead = num(usage.cache_read_input_tokens);
-      const counts = {
-        input: fresh + cacheWrite + cacheRead,
-        output: num(usage.output_tokens),
-        fresh,
-        cacheWrite,
-        cacheRead,
-      };
-      // Lines of one response can differ while it streams: keep the largest.
-      const seen = responses.get(message.id);
-      responses.set(message.id, seen && seen.output > counts.output ? seen : counts);
+      if (entry.type === "assistant" && message) noteResponse(responses, message);
     }
   }
-  if (responses.size === 0) return undefined;
+  return responses.size === 0 ? undefined : sumCounts(responses.values());
+}
+
+/**
+ * Notes the tokens of one assistant `message` in `responses`, by its ID.
+ * Claude Code repeats a response's usage on each of its content blocks, so
+ * a response counts once; `<synthetic>` messages spent nothing.
+ */
+function noteResponse(
+  responses: Map<string, Required<TokenCounts>>,
+  message: Record<string, unknown>,
+): void {
+  const usage = message.usage as Record<string, unknown> | undefined;
+  if (!usage || message.model === "<synthetic>" || typeof message.id !== "string") return;
+  const fresh = num(usage.input_tokens);
+  const cacheWrite = num(usage.cache_creation_input_tokens);
+  const cacheRead = num(usage.cache_read_input_tokens);
+  const counts = {
+    input: fresh + cacheWrite + cacheRead,
+    output: num(usage.output_tokens),
+    fresh,
+    cacheWrite,
+    cacheRead,
+  };
+  // Lines of one response can differ while it streams: keep the largest.
+  const seen = responses.get(message.id);
+  responses.set(message.id, seen && seen.output > counts.output ? seen : counts);
+}
+
+function sumCounts(counts: Iterable<Required<TokenCounts>>): Required<TokenCounts> {
   const total = { input: 0, output: 0, fresh: 0, cacheWrite: 0, cacheRead: 0 };
-  for (const r of responses.values()) {
-    for (const key of Object.keys(total) as Array<keyof typeof total>) total[key] += r[key];
+  for (const c of counts) {
+    for (const key of Object.keys(total) as Array<keyof typeof total>) total[key] += c[key];
   }
   return total;
 }

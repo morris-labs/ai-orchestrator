@@ -295,6 +295,16 @@ describe("claude resume usage", () => {
   });
 });
 
+describe("claude usage of a failed call", () => {
+  it("puts the tokens a call spent before it failed on the error", async () => {
+    const { dir, adapters } = setup();
+    // The first FLAKY answer is prose, which the schema rejects.
+    const error = await adapters.claude.review(request(dir, "FLAKY")).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as AdapterError).tokens).toMatchObject({ input: 1500, output: 90 });
+  });
+});
+
 describe("mock CLI state lock", () => {
   it("breaks a lock that a killed mock left behind", async () => {
     const { dir, adapters } = setup();
