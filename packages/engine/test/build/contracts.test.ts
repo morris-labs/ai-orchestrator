@@ -1,7 +1,7 @@
 // The Contracts step through the engine build API: in a medium or large
 // build, a Developer writes the plan's contract files with stubs before tests
 // first, and the task gate holds the stubs to the plan's checks.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { BuildPlanInput, BuildStep } from "@aio/contracts";
@@ -79,6 +79,36 @@ describe("the Contracts step", () => {
       commit: world.git(state.worktree, "rev-parse", "HEAD"),
     });
     expect(world.file("discount", "STATUS.md")).toContain("- Contracts: done after 1 attempt");
+  });
+
+  it("keeps a commit that lands on the branch before the Developer's turn starts", async () => {
+    const world = await buildWorld({ steps: STEPS });
+    world.script({
+      claude: [
+        { match: "attempt 1 of 4 of the Contracts step", times: 2, error: "crash" },
+        contractsAttempt(1, { [DISCOUNT]: DISCOUNT_STUB }),
+      ],
+    });
+
+    await world.start("discount", discountPlan());
+    const waiting = await world.settle("discount");
+    expect(waiting).toMatchObject({ step: "contracts", status: "waiting_escalation" });
+    const escalation = waiting.escalations.find((e) => e.status === "open");
+    expect(escalation).toMatchObject({ kind: "agent_call" });
+
+    // Another seat's message turn commits while the attempt waits for the seat.
+    writeFileSync(join(waiting.worktree, "docs-answer.md"), "An answer from another seat.\n");
+    world.git(waiting.worktree, "add", "docs-answer.md");
+    world.git(waiting.worktree, "commit", "-q", "-m", "docs: answer another seat");
+
+    await world.manager.resolve("discount", { escalation: escalation!.id, action: "retry" });
+    const state = await world.waitFor("discount", (s) => s.status === "finished");
+
+    expect(state.contracts).toMatchObject({ status: "done", attempts: 1 });
+    expect(world.git(state.worktree, "show", "HEAD:docs-answer.md")).toBe(
+      "An answer from another seat.",
+    );
+    expect(readFileSync(join(state.worktree, DISCOUNT), "utf8")).toBe(DISCOUNT_STUB);
   });
 
   it("skips a small build and a plan without contract files", async () => {

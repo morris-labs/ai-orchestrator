@@ -218,3 +218,15 @@ export const BuildMeetingPostRequestSchema = z
   })
   .strict();
 export type BuildMeetingPostRequest = z.infer<typeof BuildMeetingPostRequestSchema>;
+
+/**
+ * The Project manager's request to end a running meeting early, such as
+ * once the plan it discusses is frozen. The engine stops the turn under way.
+ */
+export const BuildMeetingEndRequestSchema = z
+  .object({
+    ...PlanningScope,
+    meeting: MeetingIdSchema,
+  })
+  .strict();
+export type BuildMeetingEndRequest = z.infer<typeof BuildMeetingEndRequestSchema>;

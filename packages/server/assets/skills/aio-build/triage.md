@@ -20,6 +20,7 @@ Resolve anything the frozen plan already covers, with
 | A task needs work from a task that hasn't run yet | `reorder --order T2,T1` |
 | The agents misread something the plan implies, a `question_cap` whose answer the plan holds, or a test dispute you rule on | `clarify --note "THE ANSWER"` |
 | A test dispute where the locked test stays as it is | `retry` |
+| A task needs a file that the plan left out of its owned files, such as a gate that put back its changes to a file no unfinished task owns | `retry --own FILE,FILE` or `clarify --note "WHY" --own FILE` |
 | The build's review run waits for a decision (`review`) | `decide --decision resume`, `resume_waive --waive F-1,F-2`, or `cancel` |
 | The answer changes the acceptance criteria, the scope, or the milestones | ask the owner first; then `retry --owner --changes criteria,scope` with their answer |
 | Anything you can't answer from the plan | `escalate --note "WHY"`, then ask the owner |

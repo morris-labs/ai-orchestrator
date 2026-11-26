@@ -23,6 +23,7 @@ import { escalationForCallError } from "../escalations.js";
 import { gateFailureLine, gateReport, runTaskGate, type TaskGateResult } from "../gate.js";
 import { pathMatcher } from "../paths.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
+import { landedWhileWaiting, seatWaits } from "../seat-wait.js";
 import { setupNote } from "../test-command.js";
 import { ATTEMPT_CAP } from "./tasks.js";
 import type { StepOutcome } from "./types.js";
@@ -38,6 +39,10 @@ export interface ContractsAttempt {
   attempt: number;
   /** The worktree's `HEAD` when the attempt started. */
   start: string;
+  /** The worktree's `HEAD` when the Developer's turn began. */
+  turn?: string;
+  /** The worktree's `HEAD` when the Developer's turn ended. */
+  end?: string;
   callKey: string;
   answer?: { vendor: string; model: string; output: Record<string, unknown> };
   gate?: TaskGateResult;
@@ -136,14 +141,23 @@ function attemptContext(
 }
 
 /**
- * Runs the task gate over the step's changes. A changed file under a test
- * path fails the permission check, whatever the writable paths say.
+ * Runs the task gate over the step's changes for attempt `n`. A changed
+ * file under a test path fails the permission check, whatever the writable
+ * paths say. Files that other seats committed while the step waited for the
+ * Developer don't count.
  */
-async function gate(ctx: BuildContext, base: string, task: RoleTask): Promise<TaskGateResult> {
+async function gate(
+  ctx: BuildContext,
+  base: string,
+  task: RoleTask,
+  n: number,
+): Promise<TaskGateResult> {
+  const others = await othersCommits(ctx, n);
   const result = await runTaskGate({
     worktree: ctx.worktree,
     base,
     writable: writablePaths(ctx.role(CONTRACTS_SEAT), task),
+    exempt: others,
     commands: ctx.plan.commands,
     lock: null,
     shell: ctx.services.shell,
@@ -151,7 +165,9 @@ async function gate(ctx: BuildContext, base: string, task: RoleTask): Promise<Ta
     signal: ctx.signal,
   });
   const isTest = pathMatcher(testPaths(ctx));
-  const tests = (await ctx.worktree.changedSince(base)).filter(isTest);
+  const tests = (await ctx.worktree.changedSince(base)).filter(
+    (p) => isTest(p) && !others.includes(p),
+  );
   if (tests.length === 0) return result;
   return {
     ...result,
@@ -162,6 +178,22 @@ async function gate(ctx: BuildContext, base: string, task: RoleTask): Promise<Ta
       outside: unique([...result.permission.outside, ...tests]).sort(),
     },
   };
+}
+
+/**
+ * The paths that other seats committed while the step waited for the
+ * Developer, in attempts 1 to `last`: the Developer didn't change them, so
+ * the permission check leaves them be.
+ */
+async function othersCommits(ctx: BuildContext, last: number): Promise<string[]> {
+  const attempts: ContractsAttempt[] = [];
+  for (let n = 1; n <= last; n += 1) {
+    const record = await ctx.store.readJson<ContractsAttempt>(
+      ctx.store.path(contractsAttemptFile(n)),
+    );
+    if (record) attempts.push(record);
+  }
+  return landedWhileWaiting(ctx.worktree, seatWaits(attempts));
 }
 
 /** Runs attempt `n`, or returns its saved result when it already finished. */
@@ -190,6 +222,7 @@ async function attempt(
       ? await ctx.store.readJson<ContractsAttempt>(ctx.store.path(contractsAttemptFile(n - 1)))
       : undefined;
   const task = roleTask(ctx, attemptContext(n, cap, previous, clarifications(ctx)));
+  const waited = record;
   const outcome = await ctx.callSeat({
     seat: CONTRACTS_SEAT,
     specialties: await ctx.specialties(unique(ctx.plan.tasks.flatMap((t) => t.specialties))),
@@ -198,11 +231,16 @@ async function attempt(
     task,
     // The contracts serve every task, so a message about any of them reaches this agent.
     taskIds: ctx.plan.tasks.map((t) => t.id),
+    started: async () => {
+      waited.turn = await ctx.worktree.head();
+      await ctx.store.writeJson(path, waited);
+    },
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
+  record.end = await ctx.worktree.head();
   await ctx.store.writeJson(path, record);
   await ctx.calls.checkpoint();
-  const result = await gate(ctx, await base(), task);
+  const result = await gate(ctx, await base(), task, n);
   // A gate that the engine stopped part way says nothing about the attempt.
   if (ctx.signal.aborted) throw new RunCancelled();
   await quarantine(

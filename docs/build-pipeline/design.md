@@ -305,6 +305,9 @@ and code takes the turns:
    (major or minor) for each point, and the reasons.
 3. The proposer revises. The meeting repeats until no major objection
    remains, or until it reaches its round cap, which defaults to three.
+   The Project manager can end the meeting earlier, such as once the plan
+   it discusses is frozen. The turn under way stops, and the major
+   objections of the last full round stay open.
 4. The Project manager reports the outcome and any open objections.
 
 The owner's posts in a meeting jump the queue. Every member reads them at its
@@ -576,7 +579,11 @@ bounds. It works as follows:
   continue.
 - The escalation goes to the Project manager, which resolves anything inside
   the plan: retries, task order, seating on-call roles, and clarifications
-  that the plan already implies.
+  that the plan already implies. It can also give the escalation's task
+  more files to change, such as a file that the plan left out of every
+  task, as long as the file isn't a test path and no unfinished task owns
+  it. The engine adds the files to the task's owned files in the build
+  plan.
 - After a planning meeting, the Project manager can approve a change to
   contracts or architecture. The Scribe records that change as a decision,
   with the meeting linked.

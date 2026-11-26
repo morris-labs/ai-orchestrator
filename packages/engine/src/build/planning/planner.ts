@@ -32,6 +32,7 @@ import {
   type BuildIssue,
   type BuildMeeting,
   type BuildMeetingAnswer,
+  type BuildMeetingEndRequest,
   type BuildMeetingPostRequest,
   type BuildMeetingRequest,
   type BuildPlan,
@@ -442,6 +443,8 @@ export class BuildPlanner {
     context: string[];
     omit?: string;
     expected?: { name: string; schema: z.ZodTypeAny };
+    /** Stops the call, such as for a meeting that the Project manager ended. */
+    signal?: AbortSignal;
   }): Promise<{ call: PlanningCall; answer: Record<string, unknown> }> {
     const { seat, role, expected } = input;
     const n = this.planning.calls.filter((c) => c.seat === seat).length + 1;
@@ -485,7 +488,9 @@ export class BuildPlanner {
       });
       let answer: Record<string, unknown>;
       try {
-        const outcome = await this.calls.call<Record<string, unknown>>(spec);
+        const outcome = await this.calls.call<Record<string, unknown>>(
+          input.signal ? { ...spec, signal: input.signal } : spec,
+        );
         answer = outcome.output;
         file.vendor = outcome.vendor;
         file.model = outcome.model;
@@ -591,6 +596,31 @@ export class BuildPlanner {
   async post(request: BuildMeetingPostRequest): Promise<BuildMeetingAnswer> {
     const live = this.meeting?.record.id === request.meeting ? this.meeting : null;
     if (live) return { planning: this.record, meeting: await live.post(request.body) };
+    const known = this.meetings.get(request.meeting);
+    if (!known) {
+      throw new EngineError(
+        "not_found",
+        `Build ${this.planning.slug} has no meeting ${request.meeting}.`,
+      );
+    }
+    throw new EngineError(
+      "conflict",
+      `Meeting ${request.meeting} of build ${this.planning.slug} ended: ${known.status}.`,
+    );
+  }
+
+  /**
+   * Ends the meeting under way early: the engine stops the turn under way,
+   * and the meeting ends as `ended` with the major objections of its last
+   * full round. Resolves once the meeting has ended. Throws `EngineError`:
+   * `not_found` for an unknown meeting and `conflict` for one that ended.
+   */
+  async endMeeting(request: BuildMeetingEndRequest): Promise<BuildMeetingAnswer> {
+    const live = this.meeting?.record.id === request.meeting ? this.meeting : null;
+    if (live) {
+      const meeting = await live.endEarly();
+      return { planning: this.record, meeting };
+    }
     const known = this.meetings.get(request.meeting);
     if (!known) {
       throw new EngineError(

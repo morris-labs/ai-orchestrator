@@ -432,6 +432,58 @@ describe("the Critic meeting", () => {
   });
 });
 
+describe("ending a meeting early", () => {
+  const scope = { projectId: PROJECT_ID, boxId: "box-1", slug: SLUG };
+
+  it("stops the turn under way, keeps the last round's open objections, and frees planning", async () => {
+    const world = await meetingWorld([
+      { match: CRITIC, times: 1, output: OBJECTION },
+      { match: CRITIC, output: AGREED, delayMs: 30_000 },
+    ]);
+
+    const meeting = world.manager.meet(request());
+    // End the meeting while the Critic's second turn runs.
+    await waitFor(() => {
+      if (!existsSync(join(world.dir(SLUG), "meetings/meeting-1.json"))) return false;
+      return meetingFile(world).rounds[1]?.turns[0]?.status === "running";
+    });
+    const started = Date.now();
+    const ended = await world.manager.meetingEnd({ ...scope, meeting: "meeting-1" });
+    const { meeting: done } = await meeting;
+
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(ended.meeting).toMatchObject({
+      status: "ended",
+      open: [{ seat: "critic", severity: "major", point: EMPTY_CART }],
+    });
+    expect(done.status).toBe("ended");
+    expect(done.rounds[1]?.turns[0]?.status).toBe("failed");
+    expect(ended.planning.meetings).toEqual([
+      { id: "meeting-1", file: "meetings/meeting-1.json", status: "ended" },
+    ]);
+    expect(meetingFile(world)).toMatchObject({ status: "ended" });
+    // Planning takes requests again.
+    await expect(
+      world.manager.meetingPost({ ...scope, meeting: "meeting-1", body: "Too late." }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      world.manager.plan({ ...scope, seat: "architect", brief: "Revise." }),
+    ).resolves.toMatchObject({ call: { status: "done" } });
+  });
+
+  it("refuses to end a meeting that ended or that the build doesn't have", async () => {
+    const world = await meetingWorld([{ match: CRITIC, output: AGREED }]);
+    await world.manager.meet(request());
+
+    await expect(
+      world.manager.meetingEnd({ ...scope, meeting: "meeting-1" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      world.manager.meetingEnd({ ...scope, meeting: "meeting-9" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
 async function waitFor(done: () => boolean, ms = 10_000): Promise<void> {
   const end = Date.now() + ms;
   while (Date.now() < end) {

@@ -55,9 +55,9 @@ export type MeetingId = z.infer<typeof MeetingIdSchema>;
 /**
  * Where a meeting stands: `running`, `agreed` when no major objection
  * remains, `round_cap` when it stopped at its round cap with objections
- * open, or `failed`.
+ * open, `ended` when the Project manager ended it early, or `failed`.
  */
-export const MeetingStatusSchema = z.enum(["running", "agreed", "round_cap", "failed"]);
+export const MeetingStatusSchema = z.enum(["running", "agreed", "round_cap", "ended", "failed"]);
 export type MeetingStatus = z.infer<typeof MeetingStatusSchema>;
 
 /** A meeting in the planning record; its file holds the turns. */

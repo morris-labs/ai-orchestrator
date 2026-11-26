@@ -172,6 +172,10 @@ describe("aio-build", () => {
     ).toMatchObject({
       changes: ["criteria", "scope"],
     });
+    expect(await resolve(["retry", "--own", "src/api.ts,test/routes.test.ts"])).toMatchObject({
+      action: "retry",
+      own: ["src/api.ts", "test/routes.test.ts"],
+    });
     expect(builds.resolve.mock.calls[0]?.[0]).toBe("cart-total");
   });
 
@@ -346,6 +350,19 @@ describe("aio-build", () => {
     expect(JSON.parse(out.stdout).meeting.id).toBe("meeting-1");
   });
 
+  it("ends a meeting early", async () => {
+    const { builds, run } = await world();
+    const out = await run(["meeting-end", "cart-total", "meeting-1"]);
+    expect(out.code).toBe(0);
+    expect(builds.meetingEnd).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      meeting: "meeting-1",
+    });
+    expect(out.stdout).toContain("Meeting meeting-1 of build cart-total:");
+  });
+
   it("freezes the draft plan with the push answer", async () => {
     const { builds, run } = await world();
     const out = await run(["freeze", "cart-total", "--push", "yes"]);
@@ -451,6 +468,8 @@ describe("aio-build", () => {
     [["meet", "cart-total", "brief.md", "--rounds", "0"]],
     [["meet", "cart-total", "brief.md", "--members", "Critic"]],
     [["meeting-post", "cart-total", "meeting-x", "post.md"]],
+    [["meeting-end", "cart-total"]],
+    [["meeting-end", "cart-total", "meeting-x"]],
     [["meet", "cart-total", "brief.md", "--push", "yes"]],
     [["freeze", "cart-total", "--issue", "example/shop#1"]],
     [["status", "cart-total", "--push", "yes"]],

@@ -20,6 +20,8 @@ import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
+import { finishedWork } from "../finished-work.js";
+import { otherTasks } from "../other-tasks.js";
 import { SeatCallSkipped, type BuildContext } from "../context.js";
 import { diagnose, diagnosisText, readDiagnosis, type DiagnosisRecord } from "../debugger.js";
 import {
@@ -33,13 +35,7 @@ import {
 } from "../disputes.js";
 import { escalationForCallError, type EscalationDraft } from "../escalations.js";
 import { failureFingerprint, sameFingerprint } from "../fingerprint.js";
-import {
-  gateFailureLine,
-  gateReport,
-  runTaskGate,
-  type EarlierTask,
-  type TaskGateResult,
-} from "../gate.js";
+import { gateFailureLine, gateReport, runTaskGate, type TaskGateResult } from "../gate.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import { setupNote } from "../test-command.js";
@@ -159,23 +155,6 @@ function attemptContext(
 }
 
 /**
- * The other tasks, as the gate of `task` sees them: the tasks that finished,
- * whose tests must still pass, and the test files of the tasks that haven't,
- * which may still fail.
- */
-function otherTasks(
-  ctx: BuildContext,
-  task: BuildTask,
-): { earlier: EarlierTask[]; pending: string[] } {
-  const others = ctx.plan.tasks.filter((t) => t.id !== task.id);
-  const done = (t: BuildTask) => ctx.task(t.id).status === "done";
-  return {
-    earlier: others.filter(done).map((t) => ({ id: t.id, tests: t.tests })),
-    pending: others.filter((t) => !done(t)).flatMap((t) => t.tests),
-  };
-}
-
-/**
  * The paths that message turns of other seats, or of the task's seat on
  * other tasks, changed since the task's base. The task's attempts didn't
  * change them, so its permission check leaves them be.
@@ -196,6 +175,20 @@ async function othersTurnPaths(
     }
   }
   return [...paths];
+}
+
+/**
+ * The paths changed since `base` that hold other tasks' finished work, so a
+ * task's permission check and set-aside leave them be.
+ */
+async function othersFinishedWork(
+  ctx: BuildContext,
+  taskId: string,
+  base: string,
+): Promise<string[]> {
+  const done = ctx.state.tasks.filter((t) => t.id !== taskId && t.status === "done");
+  if (done.length === 0) return [];
+  return finishedWork(ctx.worktree, await ctx.worktree.changedSince(base), done);
 }
 
 /** The context about the dispute that an attempt runs again after, or `undefined` for none. */
@@ -332,13 +325,20 @@ async function attempt(
     base,
     writable: writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
     // By exact name: a path such as `notes/*.md` must not exempt other notes.
-    exempt: [...amended, ...(await othersTurnPaths(ctx, task, base))],
+    exempt: [
+      ...amended,
+      ...(await othersTurnPaths(ctx, task, base)),
+      ...(await othersFinishedWork(ctx, task.id, base)),
+    ],
     commands: ctx.plan.commands,
     lock,
     shell: ctx.services.shell,
     baseline: await loadBaseline(ctx.store),
     protect: task.tests,
-    ...otherTasks(ctx, task),
+    ...otherTasks(
+      { tasks: ctx.plan.tasks, done: (id) => ctx.task(id).status === "done", lock },
+      task.id,
+    ),
     signal,
   });
   // A gate that the engine stopped part way says nothing about the attempt.
@@ -583,11 +583,13 @@ async function setAsideWaiting(ctx: BuildContext): Promise<void> {
     // A task without changes gets an entry too: its base moves past the
     // tasks that run meanwhile, so its permission check leaves their work alone.
     const file = `tasks/${progress.id}/set-aside-${progress.attempts}.patch`;
+    // Other tasks' finished work stays too: a stale base would revert it.
+    const finished = await othersFinishedWork(ctx, progress.id, progress.base);
     await ctx.worktree.setAside(
       progress.base,
       ctx.store.path(file),
       `chore(build): set task ${progress.id} aside while it waits for an escalation`,
-      amended,
+      [...amended, ...finished],
     );
     progress.setAside = file;
     await ctx.persist();

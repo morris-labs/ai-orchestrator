@@ -52,7 +52,15 @@ export class BuildSocketClient {
   async request(
     kind: Exclude<
       BuildSocketRequestKind,
-      "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions" | "inbox" | "status"
+      | "plan"
+      | "freeze"
+      | "meet"
+      | "meeting-post"
+      | "meeting-end"
+      | "messages"
+      | "decisions"
+      | "inbox"
+      | "status"
     >,
     body: unknown,
   ): Promise<BuildState> {

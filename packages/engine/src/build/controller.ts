@@ -262,6 +262,9 @@ export class BuildController {
       }
     } catch (error) {
       await this.stopOn(error);
+    } finally {
+      // A pause that came in meanwhile holds once no call runs.
+      await ctx.calls.endDrive();
     }
   }
 
@@ -307,6 +310,8 @@ export class BuildController {
     // The pause lasts until a resume, not until the timed wait ends.
     delete this.ctx.state.pausedUntil;
     await this.ctx.setStatus("paused");
+    // A build without a drive, such as one that waits for an escalation, holds at once.
+    await this.ctx.calls.reportHeld();
     await this.reviewRun("pause", ["running", "pending"]);
     return this.state;
   }

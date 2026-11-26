@@ -4,7 +4,9 @@
 //
 // Layout:
 //
-//   plan.json                    the build plan, as the build started with it
+//   plan.json                    the build plan, as the build started with it,
+//                                with the owned files and push answer that
+//                                resolutions added
 //   state.json                   the build's state (`BuildState`)
 //   engine.json                  the agent-call ledger: lease and agent counters, vendor limits
 //   STATUS.md                    the status file that the Project manager rereads

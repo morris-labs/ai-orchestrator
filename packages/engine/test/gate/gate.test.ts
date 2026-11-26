@@ -36,6 +36,22 @@ describe("gate", () => {
     expect(extractFailures(out)).toEqual(["Error: boom at 0x", "FAIL src/a.test.ts"]);
   });
 
+  it("skips the lines of passing tests whose names hold a failure word", () => {
+    const out = [
+      "packages/engine test: \u2713 a failed agent call (1) 812ms",
+      "packages/engine test:    \u2713 keeps polling after a failed GitHub call 402ms",
+      "\u2714 retries a failed write (3.2ms)",
+      "ok 4 - reports an Error to the caller",
+      "PASS test/failed-runs.test.ts",
+      "packages/server test: \u00d7 sends neither message when a release follows a hold 20ms",
+      "packages/server test: AssertionError: expected false to be true",
+    ].join("\n");
+    expect(extractFailures(out)).toEqual([
+      "packages/server test: AssertionError: expected false to be true",
+      "packages/server test: \u00d7 sends neither message when a release follows a hold",
+    ]);
+  });
+
   it("doesn't count fewer failures than the baseline as a regression", () => {
     const vitest = (failing: string[], passed: number) =>
       [

@@ -3,7 +3,9 @@
 // then resumes the build.
 //
 // The Project manager resolves what the build plan already covers: retries,
-// task order, and clarifications. A decision that changes the acceptance
+// task order, and clarifications, and can give an escalation's task more
+// files to change, such as a file that the plan left out of every task. A
+// decision that changes the acceptance
 // criteria, the scope, or the milestones belongs to the owner, so the engine
 // marks such an escalation for the owner instead of resolving it, and an
 // escalation for the owner takes only a decision that names the owner.
@@ -15,11 +17,13 @@ import {
 } from "@aio/contracts";
 import { EngineError } from "../api/core-interface.js";
 import type { BuildContext } from "./context.js";
+import { pathMatcher } from "./paths.js";
 import { reopenContracts } from "./steps/contracts.js";
 import { reopenReleaseReady } from "./steps/release-ready.js";
 import { reopenReview } from "./steps/review.js";
 import { reopenTask } from "./steps/tasks.js";
 import { reopenTestsFirst } from "./steps/tests-first.js";
+import { readTestLock } from "./test-lock.js";
 
 /** What a resolve request did: resolved the escalation, or handed it to the owner. */
 export type ResolveOutcome = "resolved" | "owner";
@@ -115,6 +119,37 @@ function checkRequest(ctx: BuildContext, escalation: Escalation, request: Escala
 }
 
 /**
+ * Checks the files that a resolution gives the escalation's task: only a
+ * retry or a clarification of a task can, and not a test path, which is
+ * the Test engineer's, nor a file that another unfinished task owns.
+ */
+async function checkOwn(
+  ctx: BuildContext,
+  escalation: Escalation,
+  request: EscalationResolve,
+): Promise<void> {
+  const own = request.own;
+  if (!own) return;
+  if (!escalation.taskId || (request.action !== "retry" && request.action !== "clarify")) {
+    refuse(
+      "Only a retry or clarify of an escalation with a task can give the task files to change.",
+    );
+  }
+  const taskId = escalation.taskId;
+  const isTest = pathMatcher(ctx.plan.tasks.flatMap((t) => t.tests));
+  const locked = new Set((await readTestLock(ctx.store))?.files.map((f) => f.path) ?? []);
+  for (const path of own) {
+    if (isTest(path) || locked.has(path)) {
+      refuse(`${path} is a test path, which only the Test engineer changes.`);
+    }
+    const owner = ctx.plan.tasks.find(
+      (t) => t.id !== taskId && ctx.task(t.id).status !== "done" && pathMatcher(t.ownedFiles)(path),
+    );
+    if (owner) refuse(`${path} belongs to task ${owner.id}, which isn't done.`);
+  }
+}
+
+/**
  * Resolves escalation `request.escalation` of the build, or marks it for the
  * owner. Throws `EngineError`: `not_found` for an unknown escalation,
  * `invalid_state` for one that is resolved, and `validation` for a request
@@ -144,6 +179,7 @@ export async function resolveEscalation(
   if (request.action === "escalate" && request.by === "owner") {
     refuse(`Escalation ${escalation.id} is with the owner already.`);
   }
+  await checkOwn(ctx, escalation, request);
   if (request.by !== "owner" && (request.action === "escalate" || ownerChanges.length > 0)) {
     escalation.level = "owner";
     escalation.ownerReason =
@@ -159,6 +195,7 @@ export async function resolveEscalation(
   }
   await REOPEN[escalation.kind]?.(ctx, escalation, request);
   if (request.push !== undefined) await ctx.recordPush(request.push);
+  if (request.own && escalation.taskId) await ctx.recordOwned(escalation.taskId, request.own);
   if (request.action === "reorder" && request.order) ctx.state.taskOrder = request.order;
   reopenTask(ctx, escalation);
   escalation.status = "resolved";
@@ -169,6 +206,7 @@ export async function resolveEscalation(
     ...(request.order !== undefined ? { order: request.order } : {}),
     ...(request.decision !== undefined ? { decision: request.decision } : {}),
     ...(request.push !== undefined ? { push: request.push } : {}),
+    ...(request.own !== undefined ? { own: request.own } : {}),
     changes: request.changes,
     resolvedAt: now,
   };

@@ -37,6 +37,7 @@ export const BUILD_USAGE = `Usage:
   aio-build plan SLUG SEAT BRIEF_FILE [--issue ISSUE] [--json]
   aio-build meet SLUG BRIEF_FILE [--members SEAT,...] [--proposer SEAT] [--rounds N] [--json]
   aio-build meeting-post SLUG MEETING POST_FILE [--json]
+  aio-build meeting-end SLUG MEETING [--json]
   aio-build freeze SLUG [PLAN_FILE] [--push yes|no] [--json]
   aio-build start SLUG [PLAN_FILE] [--base REF] [--json]
   aio-build status SLUG [--json]
@@ -48,7 +49,7 @@ export const BUILD_USAGE = `Usage:
   aio-build cancel SLUG [--json]
   aio-build resolve SLUG ESCALATION ACTION [--note TEXT] [--order TASKS]
                     [--decision OPTION] [--waive FINDINGS] [--push yes|no]
-                    [--changes PARTS] [--owner] [--json]
+                    [--changes PARTS] [--own FILES] [--owner] [--json]
   aio-build help
 
 Plans and drives a build of this box's project through the AI Orchestrator
@@ -73,6 +74,11 @@ Requests:
             Relay the owner's post in POST_FILE to meeting MEETING of build
             SLUG, such as meeting-1, while it runs. Every member reads it
             at its next turn.
+  meeting-end
+            End meeting MEETING of build SLUG early, such as once you froze
+            the plan it discusses. The engine stops the turn under way, and
+            the meeting ends as ended, with the major objections of its
+            last full round open. Planning then takes requests again.
   freeze    Freeze the build plan in PLAN_FILE, a JSON file ("-" reads
             standard input), or without PLAN_FILE the draft plan. A plan
             that changed since the last freeze becomes the next version in
@@ -88,8 +94,9 @@ Requests:
   status    Print the state of build SLUG: its status, step, tasks, and
             escalations. For a build in planning, print its planning
             record: the seat calls, the meetings, and the frozen plan.
-  pause     Pause build SLUG. The engine finishes the agent call in
-            progress first.
+  pause     Pause build SLUG. The engine finishes the agent call or
+            gate in progress first; once nothing runs, status shows the
+            build as paused (idle), and the worktree holds still.
   resume    Resume build SLUG after a pause or a cancel.
   cancel    Cancel build SLUG. The engine stops every agent and the
             build's review run, and keeps the branch and the worktree.
@@ -122,7 +129,9 @@ Requests:
             A decision that changes the criteria, the scope, or the
             milestones is the owner's: name the changes with --changes, and
             the engine marks the escalation for the owner instead of
-            resolving it. An escalation for the owner, such as a missing
+            resolving it. With retry or clarify, --own gives the
+            escalation's task more files to change, such as a file that
+            the build plan left out of every task. An escalation for the owner, such as a missing
             secret, takes only the owner's decision: ask the owner, then
             pass --owner. For a release ready escalation, ask the owner
             whether the build can push its branch and open its pull
@@ -159,6 +168,11 @@ Options:
                  The parts of the build plan that the decision changes,
                  separated by commas: criteria, scope, milestones,
                  contracts, or architecture.
+  --own FILES    With retry or clarify: files or globs, separated by commas,
+                 that the escalation's task may change from now on. The
+                 engine adds them to the task's owned files in the build
+                 plan. A test path, and a file that another unfinished task
+                 owns, stay out.
   --owner        Record the decision as the owner's, which the Project
                  manager relays.
   --direct       Print only the direct messages to the owner.
@@ -215,6 +229,7 @@ export type BuildCommand =
       json: boolean;
     }
   | { kind: "meeting-post"; slug: string; meeting: string; postFile: string; json: boolean }
+  | { kind: "meeting-end"; slug: string; meeting: string; json: boolean }
   | { kind: "freeze"; slug: string; planFile: string | null; push: boolean | null; json: boolean }
   | { kind: "start"; slug: string; planFile: string | null; base: string | null; json: boolean }
   | { kind: "messages"; slug: string; direct: boolean; json: boolean }
@@ -235,6 +250,7 @@ export type BuildCommand =
         | "freeze"
         | "meet"
         | "meeting-post"
+        | "meeting-end"
         | "messages"
         | "decisions"
         | "inbox"
@@ -248,6 +264,7 @@ const KINDS = new Set([
   "plan",
   "meet",
   "meeting-post",
+  "meeting-end",
   "freeze",
   "start",
   "status",
@@ -266,7 +283,16 @@ const OPTIONS: Record<string, readonly string[]> = {
   meet: ["--members", "--proposer", "--rounds"],
   freeze: ["--push"],
   start: ["--base"],
-  resolve: ["--note", "--order", "--decision", "--waive", "--push", "--changes", "--owner"],
+  resolve: [
+    "--note",
+    "--order",
+    "--decision",
+    "--waive",
+    "--push",
+    "--changes",
+    "--own",
+    "--owner",
+  ],
   inbox: ["--all"],
 };
 
@@ -283,6 +309,7 @@ const VALUE_OPTIONS = [
   "--decision",
   "--waive",
   "--changes",
+  "--own",
 ];
 
 /** Options that take no value. */
@@ -324,6 +351,7 @@ function resolution(
   const waive = values.get("--waive");
   const push = values.get("--push");
   const changes = values.get("--changes");
+  const own = values.get("--own");
   if (waive !== undefined && option === undefined) throw new Error("--waive needs --decision.");
   return {
     escalation,
@@ -336,6 +364,7 @@ function resolution(
       : {}),
     ...(push !== undefined ? { push: pushAnswer(push) } : {}),
     ...(changes !== undefined ? { changes: list(changes) } : {}),
+    ...(own !== undefined ? { own: list(own) } : {}),
   };
 }
 
@@ -449,6 +478,14 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
     }
     return { kind, slug, meeting, postFile: positional[2] as string, json };
   }
+  if (kind === "meeting-end") {
+    if (positional.length !== 2) throw new Error("meeting-end needs SLUG and MEETING.");
+    const meeting = positional[1] as string;
+    if (!MeetingIdSchema.safeParse(meeting).success) {
+      throw new Error(`${meeting} isn't a meeting: name one such as meeting-1.`);
+    }
+    return { kind, slug, meeting, json };
+  }
   if (kind === "freeze" || kind === "start") {
     if (positional.length > 2) throw new Error(`${kind} takes SLUG and at most one PLAN_FILE.`);
     const planFile = positional[1] ?? null;
@@ -489,7 +526,7 @@ function issueLines(details: unknown): string {
 /** The build's state as text for a person to read. */
 export function formatBuild(build: BuildState): string {
   const lines = [
-    `Build ${build.slug}: ${build.status}, step ${build.step}`,
+    `Build ${build.slug}: ${build.status}${build.idle ? " (idle)" : ""}, step ${build.step}`,
     `Title: ${build.title}`,
     `Branch: ${build.branch}`,
     `Worktree: ${build.worktree}`,
@@ -759,6 +796,8 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     };
   } else if (command.kind === "meeting-post") {
     body = { ...body, meeting: command.meeting, body: input };
+  } else if (command.kind === "meeting-end") {
+    body = { ...body, meeting: command.meeting };
   } else if (command.kind === "freeze" && command.push !== null) {
     body.push = command.push;
   } else if (command.kind === "start" && command.base !== null) {
@@ -786,7 +825,11 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     if (command.kind === "plan") {
       const answer = await client.send("plan", body);
       io.stdout(command.json ? json(answer) : formatSeatAnswer(answer));
-    } else if (command.kind === "meet" || command.kind === "meeting-post") {
+    } else if (
+      command.kind === "meet" ||
+      command.kind === "meeting-post" ||
+      command.kind === "meeting-end"
+    ) {
       const answer = await client.send(command.kind, body);
       io.stdout(command.json ? json(answer) : formatMeeting(answer));
     } else if (command.kind === "freeze") {

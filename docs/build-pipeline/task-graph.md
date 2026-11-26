@@ -28,6 +28,13 @@ The gate of a task treats the other tasks of the plan in two groups:
 - **Later tasks:** the tasks that haven't finished. Tests first wrote their
   tests red, so the gate doesn't run them.
 
+A task's test files are the `tests` that the plan lists for it. A locked test
+file that no task lists, such as one that a hand edit made, belongs to the
+tasks whose criteria its locked tests check. While all of them are later
+tasks, the gate treats it as a later task's file. Once none of them is a
+later task, the finished ones hold it as one of their test files. A file
+whose tests check both a later task and another task runs as it is.
+
 For a plan with several tasks, the gate works as follows:
 
 1. It skips a test command that names only test files of later tasks, and

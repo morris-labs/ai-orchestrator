@@ -1,8 +1,9 @@
 // The build socket's protocol: HTTP/1.1 with JSON bodies, over a Unix
 // socket that the engine opens inside its project container. The socket
-// accepts only build requests (planning seat calls, meetings, the freeze,
-// start, status, pause, resume, cancel, resolve, and reading the team chat,
-// decisions, and the Project manager inbox) and needs no engine token, so a
+// accepts only build requests (planning seat calls, meetings and their
+// posts and early ends, the freeze, start, status, pause, resume, cancel,
+// resolve, and reading the team chat, decisions, and the Project manager
+// inbox) and needs no engine token, so a
 // box's session can drive a build with the `aio-build` command without the
 // token that the engine's full API requires. See `docs/build-pipeline/design.md`.
 import { z } from "zod";
@@ -16,6 +17,7 @@ import {
 } from "./build-planning.js";
 import {
   BuildMeetingAnswerSchema,
+  BuildMeetingEndRequestSchema,
   BuildMeetingPostRequestSchema,
   BuildMeetingRequestSchema,
 } from "./build-meetings.js";
@@ -60,6 +62,7 @@ export const BUILD_SOCKET_ROUTES = {
   freeze: "/v1/builds/freeze",
   meet: "/v1/builds/meet",
   "meeting-post": "/v1/builds/meeting-post",
+  "meeting-end": "/v1/builds/meeting-end",
   start: "/v1/builds/start",
   status: "/v1/builds/status",
   pause: "/v1/builds/pause",
@@ -135,6 +138,9 @@ export const BuildSocketMeetSchema = BuildMeetingRequestSchema;
 /** The body of an owner post to a running meeting. */
 export const BuildSocketMeetingPostSchema = BuildMeetingPostRequestSchema;
 
+/** The body of a request to end a running meeting early. */
+export const BuildSocketMeetingEndSchema = BuildMeetingEndRequestSchema;
+
 /** The answer to a start, status, pause, resume, cancel, or resolve request: the build's state after the request. */
 export const BuildSocketResponseSchema = z.object({ build: BuildStateSchema });
 export type BuildSocketResponse = z.infer<typeof BuildSocketResponseSchema>;
@@ -155,6 +161,7 @@ export const BUILD_SOCKET_RESPONSES = {
   freeze: BuildFreezeAnswerSchema,
   meet: BuildMeetingAnswerSchema,
   "meeting-post": BuildMeetingAnswerSchema,
+  "meeting-end": BuildMeetingAnswerSchema,
   start: BuildSocketResponseSchema,
   status: BuildSocketStatusSchema,
   pause: BuildSocketResponseSchema,

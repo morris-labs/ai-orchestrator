@@ -84,6 +84,11 @@ export const BuildSummarySchema = z.object({
    * refuses every request. Absent while the build isn't deleted.
    */
   deletedAt: IsoDateTimeSchema.optional(),
+  /**
+   * `true` while the build is paused and no agent call or gate runs, so the
+   * worktree holds still. Absent otherwise.
+   */
+  idle: z.literal(true).optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

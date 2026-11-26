@@ -574,6 +574,12 @@ const resolutionFields = {
   push: z.boolean().optional(),
   /** The parts of the build plan that the decision changes. */
   changes: z.array(PlanChangeSchema).default([]),
+  /**
+   * With `retry` or `clarify` for an escalation with a task: files or globs
+   * that the task may change from now on, added to its owned files in the
+   * build plan, such as a file that the plan left out of every task.
+   */
+  own: z.array(RepoPathSchema).min(1).optional(),
 };
 
 /** Adds an issue for each field that a resolution's action needs and lacks. */
@@ -678,6 +684,13 @@ export const BuildStateSchema = z.object({
   pausedUntil: IsoDateTimeSchema.optional(),
   /** Who paused the build, while it is paused by a request or a box stop. */
   pausedBy: BuildPauseReasonSchema.optional(),
+  /**
+   * `true` while the build is paused and the pause holds: no agent call or
+   * gate runs, so the worktree stays as it is until a resume. Absent while
+   * the build runs, and while a paused build finishes its current agent
+   * call or gate.
+   */
+  idle: z.literal(true).optional(),
   /** The closing record of a cancelled build, relative to the build directory. */
   closingRecord: z.string().min(1).optional(),
   /**

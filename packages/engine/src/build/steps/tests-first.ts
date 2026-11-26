@@ -5,7 +5,13 @@
 //
 // - Each test names a criterion of the plan, and its file mentions that ID.
 // - Each criterion with a test verification has at least one test.
+// - A test in a file that a task lists checks one of that task's criteria,
+//   so the task that must make it pass owns the code it tests.
 // - The red check: each test fails on an assertion against the stubs.
+// - The plan's type check and lint commands pass with the tests in place,
+//   except where they fail only as they did at preflight. A Developer can't
+//   change a locked test, so a test that fails them would fail every task
+//   gate.
 //
 // When a round passes in a medium or large build, the coverage check reads
 // each criterion with its tests, on another vendor. The Test engineer revises
@@ -23,8 +29,12 @@ import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import type { BuildContext } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
+import { checkFailsOnlyOnBaseline, loadBaseline } from "../baseline.js";
 import { outsideWritable } from "../gate.js";
+import { pathMatcher } from "../paths.js";
+import { runGateCommand } from "../../gate/gate.js";
 import { runRedCheck, type ListedTest, type RedCheck } from "../red-check.js";
+import { landedWhileWaiting, seatWaits } from "../seat-wait.js";
 import { setupNote, testEnvironmentNote } from "../test-command.js";
 import type { RoleTask } from "../roles/index.js";
 import { lockFiles, readTestLock, writeTestLock } from "../test-lock.js";
@@ -56,6 +66,10 @@ export interface RoundRecord {
   round: number;
   /** The worktree's `HEAD` when the round started. */
   start: string;
+  /** The worktree's `HEAD` when the Test engineer's turn began. */
+  turn?: string;
+  /** The worktree's `HEAD` when the Test engineer's turn ended. */
+  end?: string;
   callKey: string;
   answer?: { vendor: string; model: string; output: Record<string, unknown> };
   check?: RoundCheck;
@@ -88,6 +102,7 @@ function roleTask(ctx: BuildContext, scope: Scope, context: string): RoleTask {
     title: `Tests first for ${ctx.plan.title}`,
     description: [
       "Write the tests for these acceptance criteria before any code for them exists. Each test must fail on an assertion against the stubs.",
+      "The plan's type check and lint commands must pass with your tests in place, because no Developer can change a locked test.",
       ctx.state.contracts?.status === "done"
         ? "The Contracts step wrote the contracts and their stubs, and committed them: import the real signatures from them, and test through them."
         : "",
@@ -160,17 +175,36 @@ async function readText(path: string): Promise<string | null> {
 }
 
 /**
+ * The paths that other seats committed while tests first waited for the
+ * Test engineer, in rounds 1 to `last`: the Test engineer didn't change them.
+ */
+async function othersCommits(ctx: BuildContext, last: number): Promise<string[]> {
+  const rounds: RoundRecord[] = [];
+  for (let n = 1; n <= last; n += 1) {
+    const record = await ctx.store.readJson<RoundRecord>(ctx.store.path(roundFile(n)));
+    if (record) rounds.push(record);
+  }
+  return landedWhileWaiting(ctx.worktree, seatWaits(rounds));
+}
+
+/**
  * Checks the tests a round's answer lists, then runs the red check over the
  * ones that pass those checks. Changed files outside the test paths are put
- * back first, so the tests run against the stubs.
+ * back first, so the tests run against the stubs, except the files that
+ * other seats committed while the round waited for its seat.
  */
 async function checkRound(
   ctx: BuildContext,
   scope: Scope,
+  n: number,
   output: Record<string, unknown>,
 ): Promise<RoundCheck> {
   const problems: string[] = [];
-  const outside = outsideWritable(await ctx.worktree.changedSince(scope.base), scope.paths);
+  const outside = outsideWritable(
+    await ctx.worktree.changedSince(scope.base),
+    scope.paths,
+    await othersCommits(ctx, n),
+  );
   if (outside.length > 0) {
     await ctx.worktree.restorePaths(scope.base, outside);
     problems.push(
@@ -217,6 +251,19 @@ async function checkRound(
       problems.push(`${named}: the file doesn't mention criterion ID ${criterion}.`);
       continue;
     }
+    const owners = ctx.plan.tasks.filter((task) => pathMatcher(task.tests)(file));
+    if (owners.length > 0 && !owners.some((task) => task.criteria.includes(criterion))) {
+      const ownersText = owners
+        .map((task) => `task ${task.id}, which covers ${task.criteria.join(", ")}`)
+        .join(", and ");
+      const homes = unique(
+        ctx.plan.tasks.filter((task) => task.criteria.includes(criterion)).flatMap((t) => t.tests),
+      );
+      problems.push(
+        `${named} checks criterion ${criterion}, but ${file} belongs to ${ownersText}. That task can't make it pass. Move the test to a test file of a task that covers ${criterion}${homes.length > 0 ? `: ${homes.join(", ")}` : ""}.`,
+      );
+      continue;
+    }
     listed.push({ file, name, criterion, command });
   }
   const tested = new Set(listed.map((t) => t.criterion));
@@ -231,8 +278,41 @@ async function checkRound(
     shell: ctx.services.shell,
     signal: ctx.signal,
   });
-  const all = [...problems, ...red.problems];
+  const all = [...problems, ...red.problems, ...(await checkCommands(ctx))];
   return { passed: all.length === 0, problems: all, tests: red.tests, outside };
+}
+
+/** Lines of a failed check that a problem quotes. */
+const QUOTED_LINES = 10;
+
+/**
+ * Runs the plan's type check and lint commands over the round's tests, and
+ * returns one problem for each that fails other than as it did at preflight.
+ */
+async function checkCommands(ctx: BuildContext): Promise<string[]> {
+  const baseline = await loadBaseline(ctx.store);
+  const problems: string[] = [];
+  for (const kind of ["typecheck", "lint"] as const) {
+    for (const cmd of ctx.plan.commands[kind]) {
+      if (ctx.signal.aborted) return problems;
+      const result = await runGateCommand(kind, cmd, {
+        repoPath: ctx.worktree.path,
+        shell: ctx.services.shell,
+        signal: ctx.signal,
+        diagnostics: true,
+      });
+      if (result.passed || checkFailsOnlyOnBaseline(result, baseline)) continue;
+      const label = kind === "typecheck" ? "type check" : "lint command";
+      const lines = result.diagnostics?.length
+        ? result.diagnostics
+        : result.outputTail.split("\n").filter((l) => l.trim() !== "");
+      const quoted = lines.slice(0, QUOTED_LINES).join("\n");
+      problems.push(
+        `The ${label} \`${cmd.command}\` fails with the tests in place${result.timedOut ? " (it timed out)" : ""}:\n${quoted}`,
+      );
+    }
+  }
+  return problems;
 }
 
 /**
@@ -257,6 +337,7 @@ async function round(
   const specialties = await ctx.specialties(
     unique(ctx.plan.tasks.flatMap((task) => task.specialties)),
   );
+  const waited = record;
   const outcome = await ctx.callSeat({
     seat: TEST_ENGINEER,
     specialties,
@@ -266,11 +347,16 @@ async function round(
     // The Test engineer writes the tests of every task in scope, so a
     // message about any of them reaches this agent.
     taskIds: ctx.plan.tasks.map((task) => task.id),
+    started: async () => {
+      waited.turn = await ctx.worktree.head();
+      await ctx.store.writeJson(path, waited);
+    },
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
+  record.end = await ctx.worktree.head();
   await ctx.store.writeJson(path, record);
   await ctx.calls.checkpoint();
-  const check = await checkRound(ctx, scope, outcome.output);
+  const check = await checkRound(ctx, scope, n, outcome.output);
   // A check that the engine stopped part way says nothing about the round.
   if (ctx.signal.aborted) throw new RunCancelled();
   const checked: CheckedRound = { ...record, check };
@@ -284,7 +370,8 @@ async function lock(ctx: BuildContext, scope: Scope, record: CheckedRound): Prom
     await ctx.worktree.commitAll(`test(build): add the tests first for ${ctx.plan.title}`);
   }
   const commit = await ctx.worktree.head();
-  const changed = await ctx.worktree.changedSince(scope.base);
+  // Only test paths: other seats' commits since the base aren't tests.
+  const changed = (await ctx.worktree.changedSince(scope.base)).filter(pathMatcher(scope.paths));
   const tests = record.check.tests.map(({ file, name, criterion, command }) => ({
     file,
     name,

@@ -33,7 +33,7 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
     "The engine rewrites this file every time the build's state changes. After a",
     "compaction or a restart, reread it and the build plan in `plan.json`.",
     "",
-    `- Status: ${state.status}${state.pausedUntil ? ` until ${state.pausedUntil}` : ""}`,
+    `- Status: ${state.status}${state.idle ? " (idle)" : ""}${state.pausedUntil ? ` until ${state.pausedUntil}` : ""}`,
     `- Step: ${state.step}`,
     `- Branch: \`${state.branch}\`, in the worktree \`${state.worktree}\``,
     `- Base: \`${state.base}\``,

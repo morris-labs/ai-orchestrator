@@ -8,7 +8,10 @@
 //   commits it, locks it again, and records the amendment in the lock.
 // - Rejected: the Test engineer answers with its reason, and the test stands.
 // - Ruled on: a second dispute about one test, or a third in one task, goes
-//   to the Project manager as an escalation.
+//   to the Project manager as an escalation. A `clarify` ruling goes to the
+//   Test engineer, who applies it to the test, so a ruling against a locked
+//   test can change it; the Developer reads the ruling too. A `retry` keeps
+//   the test as it is locked.
 // - Escalated: an amendment that changes what a criterion means goes to the
 //   owner. The engine saves the amendment as a patch, and locks it only when
 //   the owner's resolution changes the criteria.
@@ -76,8 +79,14 @@ export interface DisputeRecord {
   /** The Developer's reason. */
   reason: string;
   openedAt: string;
-  /** The commit that holds the task's work when the Test engineer started. */
+  /** The commit that holds the task's work when the dispute went to the Test engineer. */
   start?: string;
+  /**
+   * The branch head when the Test engineer's turn began. Message turns of
+   * other seats can commit while the dispute waits for the seat, so the
+   * Test engineer's changes are the ones since this commit, not since `start`.
+   */
+  turn?: string;
   /** The Test engineer's call key. */
   callKey?: string;
   answer?: { vendor: string; model: string; output: Record<string, unknown> };
@@ -89,6 +98,8 @@ export interface DisputeRecord {
   amendment?: string;
   /** The escalation that took the dispute, for `ruled` and `escalated`. */
   escalation?: string;
+  /** The Project manager's `clarify` ruling, which the Test engineer applies to the test. */
+  ruling?: string;
   outcome?: DisputeOutcome;
   /** Why the dispute ended the way it did, for the Developer's next try. */
   note?: string;
@@ -249,7 +260,7 @@ async function ruling(ctx: BuildContext, record: DisputeRecord): Promise<Escalat
     taskId: record.taskId,
     summary: `Task ${record.taskId} disputes ${record.test} again: ${why}, so the Project manager rules on it.`,
     details: [
-      `Rule on the dispute. Resolve with clarify and a note that the Developer reads, or with retry to keep the test as it is. A ruling that changes what a criterion means is the owner's.`,
+      `Rule on the dispute. Resolve with clarify and the ruling: the Test engineer applies it to the test, and the Developer reads it. Resolve with retry to keep the test as it is. A ruling that changes what a criterion means is the owner's.`,
       "",
       "Disputes:",
       history(record, [...new Set([...sameTest, ...sameTask])]),
@@ -314,6 +325,14 @@ function roleTask(
       "",
       untrusted(record.reason || "No reason given."),
       "",
+      ...(record.ruling
+        ? [
+            "The Project manager ruled on the dispute. Apply the ruling to the test: change the file as the ruling says and answer amend, or answer reject when the ruling keeps the test as it is. The ruling follows.",
+            "",
+            untrusted(record.ruling),
+            "",
+          ]
+        : []),
       "The locked tests in the file:",
       ...locked.map((t) => `- ${t.name} (${t.criterion}): \`${t.command}\``),
       "",
@@ -337,6 +356,8 @@ async function callTestEngineer(
   const outcome = await ctx.worktreeLock.outside((reclaim) =>
     ctx.sessions.run(TEST_ENGINEER, async () => {
       await reclaim();
+      record.turn = await ctx.worktree.head();
+      await save(ctx, record);
       const placement = ctx.seats.place(TEST_ENGINEER);
       const answer = await ctx.callTurn({
         seat: TEST_ENGINEER,
@@ -380,7 +401,7 @@ async function callTestEngineer(
 /**
  * Runs the red check of the amended tests against the code as it was before
  * the task: the task's other changes are put back to its base for the run,
- * then restored from `record.start`.
+ * then restored from the commit where the Test engineer's turn began.
  */
 async function redCheck(
   ctx: BuildContext,
@@ -388,7 +409,7 @@ async function redCheck(
   record: DisputeRecord,
   tests: readonly ListedTest[],
 ): Promise<RedCheck> {
-  const start = record.start;
+  const start = turnStart(record);
   if (!start) throw new Error(`Dispute ${disputeFile(task.id, record.id)} has no start.`);
   const base = ctx.task(task.id).base ?? ctx.state.base;
   const held = (await ctx.worktree.changedSince(base)).filter((p) => p !== record.test);
@@ -427,7 +448,7 @@ async function amend(
   if (ctx.signal.aborted) throw new RunCancelled();
   record.check = check;
   if (!check.passed) {
-    await ctx.worktree.restorePaths(record.start ?? lock.commit, [record.test]);
+    await ctx.worktree.restorePaths(turnStart(record) ?? lock.commit, [record.test]);
     await settle(
       ctx,
       record,
@@ -461,6 +482,14 @@ async function amend(
   await settle(ctx, record, "amended", `The Test engineer fixed the test: ${reason}`);
 }
 
+/**
+ * The commit that the Test engineer's changes count from: where its turn
+ * began, or for a dispute saved before the engine recorded that, its start.
+ */
+function turnStart(record: DisputeRecord): string | undefined {
+  return record.turn ?? record.start;
+}
+
 /** Commits the task's work, so the Test engineer's changes stand apart from it. Returns `HEAD`. */
 async function saveTaskWork(
   ctx: BuildContext,
@@ -487,6 +516,7 @@ async function afterOwner(
   const patch = record.amendment ? ctx.store.path(record.amendment) : null;
   if (!accepted || !patch || !existsSync(patch) || !record.answer) return;
   record.start = await saveTaskWork(ctx, task, record);
+  record.turn = record.start;
   await save(ctx, record);
   if (!(await ctx.worktree.bringBack(patch))) {
     record.note = `The owner accepted the amendment, but it no longer applies to ${record.test}, so the test stands as it is locked.`;
@@ -511,8 +541,9 @@ export async function settleDispute(
   const record = await ctx.store.readJson<DisputeRecord>(ctx.store.path(disputeFile(task.id, id)));
   if (!record) throw new Error(`Task ${task.id} has no dispute ${id}.`);
   // A red check that a stop cut short left the task's work put back.
-  if (record.held && record.start) {
-    await ctx.worktree.restorePaths(record.start, record.held);
+  const held = turnStart(record);
+  if (record.held && held) {
+    await ctx.worktree.restorePaths(held, record.held);
     delete record.held;
     await save(ctx, record);
   }
@@ -524,7 +555,16 @@ export async function settleDispute(
     if (record.outcome === "escalated" && escalation && lock) {
       await afterOwner(ctx, task, record, escalation, lock);
     }
-    return "settled";
+    const ruled = escalation?.resolution;
+    if (record.outcome !== "ruled" || ruled?.action !== "clarify" || !ruled.note || !lock) {
+      return "settled";
+    }
+    // The ruling goes to the Test engineer, the only seat that can change a locked test.
+    record.ruling = ruled.note;
+    delete record.outcome;
+    delete record.note;
+    delete record.settledAt;
+    await save(ctx, record);
   }
   if (!lock) {
     await settle(
@@ -544,7 +584,7 @@ export async function settleDispute(
     );
     return "settled";
   }
-  const ruled = await ruling(ctx, record);
+  const ruled = record.ruling === undefined ? await ruling(ctx, record) : null;
   if (ruled) {
     const escalation = await ctx.escalate(ruled);
     record.escalation = escalation.id;
@@ -566,7 +606,7 @@ export async function settleDispute(
     record.answer = await callTestEngineer(ctx, task, record, lock);
     await save(ctx, record);
   }
-  const start = record.start ?? lock.commit;
+  const start = turnStart(record) ?? lock.commit;
   const outside = outsideWritable(await ctx.worktree.changedSince(start), [record.test]);
   if (outside.length > 0) await ctx.worktree.restorePaths(start, outside);
   const output = record.answer.output;

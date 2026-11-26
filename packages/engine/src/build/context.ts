@@ -126,6 +126,12 @@ export interface SeatCall {
    * meanwhile, makes `callSeat()` throw `SeatCallSkipped` without a call.
    */
   proceed?: () => boolean;
+  /**
+   * Runs once the seat and the worktree are the drive's, right before the
+   * call, such as to record the branch head that the agent's changes count
+   * from: message turns can commit while the call waits for the seat.
+   */
+  started?: () => Promise<void>;
 }
 
 /** A seat call that `SeatCall.proceed` stopped before it started. */
@@ -219,6 +225,15 @@ export class BuildContext {
           this.state.status = "running";
           delete this.state.pausedUntil;
           delete this.state.pausedBy;
+          delete this.state.idle;
+          await this.persist();
+        },
+        held: async (held) => {
+          // Only a request or a box stop's pause shows as idle.
+          const idle = held && this.state.status === "paused" && this.state.pausedBy !== undefined;
+          if (idle === (this.state.idle === true)) return;
+          if (idle) this.state.idle = true;
+          else delete this.state.idle;
           await this.persist();
         },
       },
@@ -321,7 +336,7 @@ export class BuildContext {
       });
     });
     await write;
-    const shown = `${state.status}:${state.step}:${state.deletedAt ?? ""}`;
+    const shown = `${state.status}:${state.step}:${state.deletedAt ?? ""}:${state.idle ?? ""}`;
     if (this.announced === shown) return;
     this.announced = shown;
     await this.emit({
@@ -336,6 +351,7 @@ export class BuildContext {
         step: state.step,
         ...(this.plan.usageEstimate ? { usageEstimate: this.plan.usageEstimate } : {}),
         ...(state.deletedAt ? { deletedAt: state.deletedAt } : {}),
+        ...(state.idle ? { idle: true } : {}),
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
       },
@@ -378,6 +394,7 @@ export class BuildContext {
     if (status !== "paused") {
       delete this.state.pausedUntil;
       delete this.state.pausedBy;
+      delete this.state.idle;
     }
     await this.persist();
   }
@@ -533,6 +550,18 @@ export class BuildContext {
     }
   }
 
+  /**
+   * Adds `paths` to task `taskId`'s owned files in the build plan, so its
+   * next attempt may change them. The plan's task object changes in place,
+   * so every step that holds it sees the files.
+   */
+  async recordOwned(taskId: string, paths: readonly string[]): Promise<void> {
+    const task = this.plan.tasks.find((t) => t.id === taskId);
+    if (!task) throw new Error(`The build plan has no task ${taskId}.`);
+    task.ownedFiles = [...new Set([...task.ownedFiles, ...paths])];
+    await this.store.savePlan(this.plan);
+  }
+
   /** Records the owner's push answer in the build plan. */
   async recordPush(push: boolean): Promise<void> {
     this.plan.push = push;
@@ -648,6 +677,7 @@ export class BuildContext {
         // The drive has the worktree back for its agent's whole turn.
         await reclaim();
         if (input.proceed && !input.proceed()) throw new SeatCallSkipped(input.seat);
+        await input.started?.();
         const placement = this.seats.place(input.seat, input.placement);
         const decisions = await this.decisionsText(taskIds);
         const task = {

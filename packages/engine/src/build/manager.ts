@@ -7,6 +7,7 @@ import {
   BOX_BUILD_STATUSES,
   BuildCreateSchema,
   BuildFreezeRequestSchema,
+  BuildMeetingEndRequestSchema,
   BuildMeetingPostRequestSchema,
   BuildMeetingRequestSchema,
   BuildSeatRequestSchema,
@@ -17,6 +18,7 @@ import {
   type BuildFreezeAnswer,
   type BuildFreezeRequest,
   type BuildMeetingAnswer,
+  type BuildMeetingEndRequest,
   type BuildMeetingPostRequest,
   type BuildMeetingRequestInput,
   type BuildPauseReason,
@@ -87,6 +89,11 @@ export interface BuildManager {
    * unknown meeting and `conflict` for one that ended.
    */
   meetingPost(request: BuildMeetingPostRequest): Promise<BuildMeetingAnswer>;
+  /**
+   * Ends a meeting under way early and resolves once it has ended. Throws
+   * `not_found` for an unknown meeting and `conflict` for one that ended.
+   */
+  meetingEnd(request: BuildMeetingEndRequest): Promise<BuildMeetingAnswer>;
   /**
    * Creates a build and starts it, from the request's plan or, absent, the
    * build's latest frozen plan. Throws `conflict` when the build exists, and
@@ -372,6 +379,18 @@ export class EngineBuildManager implements BuildManager {
       );
     }
     return planner.post(request);
+  }
+
+  async meetingEnd(input: BuildMeetingEndRequest): Promise<BuildMeetingAnswer> {
+    const request = BuildMeetingEndRequestSchema.parse(input);
+    const planner = await this.planner(request.slug);
+    if (!planner || planner.record.projectId !== request.projectId) {
+      throw new EngineError(
+        "not_found",
+        `Project ${request.projectId} has no build ${request.slug}.`,
+      );
+    }
+    return planner.endMeeting(request);
   }
 
   /** The plan a build starts from, and the planning record it keeps. */

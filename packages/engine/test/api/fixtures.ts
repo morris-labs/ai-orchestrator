@@ -359,6 +359,7 @@ export function fakeBuildManager(): {
     freeze: vi.fn(async () => freezeAnswer),
     meet: vi.fn(async () => meetingAnswer),
     meetingPost: vi.fn(async () => meetingAnswer),
+    meetingEnd: vi.fn(async () => meetingAnswer),
     start: vi.fn(async () => buildState),
     get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
     planning: vi.fn(async (slug: string) =>
