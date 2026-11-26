@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { actOutBusCalls } from "../lib/mcp.mjs";
 import {
+  addSessionTotal,
   answerText,
   loadScenario,
   logCall,
@@ -187,10 +188,15 @@ const usageBlock = {
   cache_read_input_tokens: 0,
   cache_creation_input_tokens: 0,
 };
+// Like the real CLI, `modelUsage` covers the whole session, earlier turns
+// of a resumed session included, while `usage` covers this turn only.
+const sessionTotal = response.error
+  ? tokens
+  : addSessionTotal("claude", scenario, sessionId, tokens);
 const modelUsage = {
   [model]: {
-    inputTokens: tokens.input,
-    outputTokens: tokens.output,
+    inputTokens: sessionTotal.input,
+    outputTokens: sessionTotal.output,
     cacheReadInputTokens: 0,
     cacheCreationInputTokens: 0,
     costUSD: cost,

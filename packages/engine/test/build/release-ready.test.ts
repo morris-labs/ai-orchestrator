@@ -668,6 +668,64 @@ describe("the release ready step", () => {
     );
   });
 
+  it("lists the confirmed nits that the review run leaves unfixed in the pull request and the digest", async () => {
+    const origin = originPath();
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      review: true,
+      release: true,
+      github: new FakeGitHub(origin),
+    });
+    releaseProject(world, origin);
+    const finder: MockResponse = {
+      times: 1,
+      output: {
+        findings: [
+          {
+            severity: "P2",
+            title: "Remove the task note from the cart",
+            file: "src/cart.mjs",
+            lines: [1, 1],
+            failure_case: "The module keeps a development note.",
+            category: "maintainability",
+            introduced: true,
+          },
+        ],
+      },
+    };
+    // The disprover confirms the finding and ranks it a nit.
+    const nit: MockResponse = {
+      match: "[Dd]isprove",
+      output: {
+        verdicts: [
+          {
+            id: "F-0001",
+            verdict: "confirmed",
+            severity: "nit",
+            verification: "code-reading",
+            evidence: "A comment only.",
+          },
+        ],
+      },
+    };
+    world.script({
+      codex: [TEST_ENGINEER, SCRIBE, nit, finder, CLEAN_REVIEW],
+      claude: [DEVELOPER, nit, finder, CLEAN_REVIEW],
+    });
+
+    await world.start("cart-total", releasePlan(false));
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "finished" });
+    const body = world.file("cart-total", "release/pull-request.md");
+    expect(body).toMatch(
+      /## Review nits\n[\s\S]*- \[ \] F-0001 `src\/cart\.mjs:1-1`: Remove the task note from the cart/,
+    );
+    expect(world.file("cart-total", "digests/release-ready.md")).toContain(
+      "Confirmed review nits left unfixed: F-0001.",
+    );
+  });
+
   it("lists the review run's follow-up findings in the pull request when the run ended clean with follow-ups", async () => {
     const origin = originPath();
     const world = await buildWorld({

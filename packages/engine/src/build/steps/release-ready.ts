@@ -303,6 +303,25 @@ async function reviewFollowUps(ctx: BuildContext): Promise<Finding[]> {
   return pending.filter((f) => f.followUpReason !== undefined);
 }
 
+/**
+ * The build's review run findings that it confirmed as nits and left
+ * unfixed. By the review pipeline's design, a confirmed nit never goes to
+ * the fixer and doesn't keep a run from ending clean, so the pull request
+ * and the digest list them for the owner.
+ */
+async function reviewNits(ctx: BuildContext): Promise<Finding[]> {
+  const runs = ctx.services.reviews;
+  const review = await ctx.store.readJson<{ runId: string }>(ctx.store.path("review", "run.json"));
+  if (!runs || !review || !(await runs.get(review.runId))) return [];
+  const confirmed = await runs.findings(review.runId, { verdict: "confirmed" });
+  return confirmed.filter((f) => f.severity === "nit" && f.fixCommit === undefined);
+}
+
+function nitLine(f: Finding): string {
+  const where = f.file ? ` \`${f.file}${f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""}\`` : "";
+  return `- [ ] ${f.id}${where}: ${f.title}`;
+}
+
 function followUpLine(f: Finding): string {
   const where = f.file ? ` \`${f.file}${f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""}\`` : "";
   return `- [ ] ${f.id} (${f.severity})${where}: ${f.title}. No vendor checked it: ${f.followUpReason ?? ""}`;
@@ -320,6 +339,7 @@ export function pullRequestBody(
   baseline: TestBaseline,
   gate: FinalGateRecord,
   followUps: readonly Finding[],
+  nits: readonly Finding[] = [],
 ): string {
   const fixed = knownFailingLines(baseline, gate, true);
   const texts = new Map(ctx.plan.criteria.map((c) => [c.id, c.text]));
@@ -360,6 +380,16 @@ export function pullRequestBody(
           "The review run reported these findings, and no vendor would check them. Check each one before you merge.",
           "",
           ...followUps.map(followUpLine),
+          "",
+        ]),
+    ...(nits.length === 0
+      ? []
+      : [
+          "## Review nits",
+          "",
+          "The review run confirmed these nits. A review run never sends a nit to the fixer, so they stay in the code. Fix each one or leave it.",
+          "",
+          ...nits.map(nitLine),
           "",
         ]),
     ...(fixed.length === 0
@@ -561,6 +591,7 @@ function digest(
   gate: FinalGateRecord,
   push: PushRecord | null,
   pm: TranscriptUsage | null,
+  nits: readonly Finding[] = [],
 ): string {
   const owner = ownerChecks(ctx);
   return [
@@ -575,6 +606,11 @@ function digest(
     `- Known failing tests: ${knownFailingLines(baseline, gate).length}. Fixed tests: ${knownFailingLines(baseline, gate, true).length}. Flaky tests: ${baseline.flaky.length}.`,
     `- Record: ${scribe.commit ? `commit \`${scribe.commit.slice(0, 12)}\`` : "no record changes"}.`,
     `- Pull request title: ${scribe.title}`,
+    ...(nits.length > 0
+      ? [
+          `- Confirmed review nits left unfixed: ${nits.map((f) => f.id).join(", ")}. A review run never fixes a nit; the pull request lists them.`,
+        ]
+      : []),
     ...(pm
       ? [
           `- Project manager session since planning started (tokens only): ${pm.turns} turns, ${pm.tokensIn} tokens in, ${pm.tokensOut} tokens out.`,
@@ -623,7 +659,16 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   const bodyFile = ctx.store.path(RELEASE_FILES.pullRequest);
   const written = await readFile(bodyFile, "utf8").catch(() => null);
   const body =
-    written ?? pullRequestBody(ctx, scribe, trace, baseline, gate, await reviewFollowUps(ctx));
+    written ??
+    pullRequestBody(
+      ctx,
+      scribe,
+      trace,
+      baseline,
+      gate,
+      await reviewFollowUps(ctx),
+      await reviewNits(ctx),
+    );
   if (written === null) await ctx.store.writeText(bodyFile, body);
   await ctx.calls.checkpoint();
   let push: PushRecord | null = null;
@@ -645,7 +690,7 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   const pm = await reportProjectManagerUsage(ctx);
   await ctx.store.writeText(
     ctx.store.path(RELEASE_FILES.digest),
-    digest(ctx, scribe, trace, baseline, gate, push, pm),
+    digest(ctx, scribe, trace, baseline, gate, push, pm, await reviewNits(ctx)),
   );
   ctx.state.note = `Release ready. The digest is in ${RELEASE_FILES.digest}.`;
   await ctx.persist();

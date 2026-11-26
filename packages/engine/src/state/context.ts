@@ -188,7 +188,9 @@ export class RunContext {
       commits: { head: () => this.git.head(), resetKeep: (sha) => this.git.resetKeep(sha) },
       observer: {
         task: (spec, state, extra) => this.updateTask(spec, state, extra),
+        leasing: (spec, vendor) => this.noteRoleVendor(ROLE_FOR_AGENT[spec.role], vendor),
         starting: (spec, vendor) => {
+          this.noteRoleVendor(ROLE_FOR_AGENT[spec.role], vendor);
           // A fixer can commit and then fail or stop; the confirmer must be another vendor.
           if (spec.role === "fixer" && !this.eng.roundFixers.includes(vendor)) {
             this.eng.roundFixers.push(vendor);
@@ -534,7 +536,7 @@ export class RunContext {
         type: "role.reassigned",
         runId: this.state.id,
         role,
-        from,
+        from: this.lostBy(role, from),
         to,
         reason: "manual",
         effectiveRound: Math.max(this.round, 1),
@@ -562,6 +564,23 @@ export class RunContext {
     return (
       assigned.find((v) => !limitOf(v) && !spec.avoid?.includes(v) && this.usable(v)) ?? vendor
     );
+  }
+
+  /** Notes that a call of `role` runs on `vendor` this round. */
+  private noteRoleVendor(role: Role, vendor: Vendor): void {
+    const used = (this.eng.roundRoleVendors[role] ??= []);
+    if (!used.includes(vendor)) used.push(vendor);
+  }
+
+  /**
+   * The vendors that lose `role`: those its calls ran on this round, which
+   * for a single-vendor role can differ from the role's own vendor, or
+   * `assigned` when no call of the role ran yet.
+   */
+  private lostBy(role: Role, assigned: Vendor[]): Vendor[] {
+    if (role === "reviewer") return assigned;
+    const used = this.eng.roundRoleVendors[role] ?? [];
+    return used.length > 0 ? [...used] : assigned;
   }
 
   /** Moves a role to another vendor in the run's roles, and announces it unless the server did. */
@@ -597,7 +616,9 @@ export class RunContext {
       type: "role.reassigned",
       runId: this.state.id,
       role: contractRole,
-      from: before.length > 0 ? before : [from],
+      // A single-vendor role's call can run on a vendor other than the
+      // role's own, so the vendor that lost it is the call's.
+      from: contractRole === "reviewer" && before.length > 0 ? before : [from],
       to: after,
       reason,
       effectiveRound: this.round,

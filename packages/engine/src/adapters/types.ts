@@ -155,6 +155,8 @@ export class AdapterError extends Error {
   readonly sessionId: string | null;
   /** Usage samples the call reported before it failed. The bridge fills this in. */
   usage: UsageSample[] = [];
+  /** The tokens the call spent before it failed, when the adapter can tell. */
+  tokens: TokenCounts | undefined = undefined;
 
   constructor(
     vendor: Vendor,
