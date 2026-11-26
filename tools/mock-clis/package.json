@@ -1,6 +1,6 @@
 {
   "name": "@aio/mock-clis",
-  "version": "3.2.3",
+  "version": "3.3.0",
   "description": "Stand-ins for the codex, copilot, and claude CLIs that replay scripted scenarios.",
   "private": true,
   "type": "module",

@@ -6,6 +6,8 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-26
+
 ### Added
 
 - Build pipeline, phase 1. A Project manager session in a box runs a build

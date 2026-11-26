@@ -1,6 +1,6 @@
 {
   "name": "@aio/cli",
-  "version": "3.2.3",
+  "version": "3.3.0",
   "description": "The aio command-line client for the AI Orchestrator server.",
   "private": true,
   "type": "module",
