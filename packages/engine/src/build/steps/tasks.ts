@@ -21,6 +21,7 @@ import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
 import { finishedWork } from "../finished-work.js";
+import { otherTasks } from "../other-tasks.js";
 import { SeatCallSkipped, type BuildContext } from "../context.js";
 import { diagnose, diagnosisText, readDiagnosis, type DiagnosisRecord } from "../debugger.js";
 import {
@@ -34,13 +35,7 @@ import {
 } from "../disputes.js";
 import { escalationForCallError, type EscalationDraft } from "../escalations.js";
 import { failureFingerprint, sameFingerprint } from "../fingerprint.js";
-import {
-  gateFailureLine,
-  gateReport,
-  runTaskGate,
-  type EarlierTask,
-  type TaskGateResult,
-} from "../gate.js";
+import { gateFailureLine, gateReport, runTaskGate, type TaskGateResult } from "../gate.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import { setupNote } from "../test-command.js";
@@ -157,23 +152,6 @@ function attemptContext(
     );
   }
   return lines.join("\n");
-}
-
-/**
- * The other tasks, as the gate of `task` sees them: the tasks that finished,
- * whose tests must still pass, and the test files of the tasks that haven't,
- * which may still fail.
- */
-function otherTasks(
-  ctx: BuildContext,
-  task: BuildTask,
-): { earlier: EarlierTask[]; pending: string[] } {
-  const others = ctx.plan.tasks.filter((t) => t.id !== task.id);
-  const done = (t: BuildTask) => ctx.task(t.id).status === "done";
-  return {
-    earlier: others.filter(done).map((t) => ({ id: t.id, tests: t.tests })),
-    pending: others.filter((t) => !done(t)).flatMap((t) => t.tests),
-  };
 }
 
 /**
@@ -357,7 +335,10 @@ async function attempt(
     shell: ctx.services.shell,
     baseline: await loadBaseline(ctx.store),
     protect: task.tests,
-    ...otherTasks(ctx, task),
+    ...otherTasks(
+      { tasks: ctx.plan.tasks, done: (id) => ctx.task(id).status === "done", lock },
+      task.id,
+    ),
     signal,
   });
   // A gate that the engine stopped part way says nothing about the attempt.
