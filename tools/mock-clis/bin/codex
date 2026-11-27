@@ -150,8 +150,6 @@ if (!picked) {
   process.exit(1);
 }
 const response = picked.response;
-if (response.delayMs) await sleep(response.delayMs);
-if (response.stderr) process.stderr.write(response.stderr);
 
 // Like the real CLI, a resumed turn reports the whole thread's total, so the
 // mock adds the turn to the total in the thread's rollout file.
@@ -161,8 +159,12 @@ const total = {
   input: (priorTotal?.input ?? 0) + turnTokens.input,
   output: (priorTotal?.output ?? 0) + turnTokens.output,
 };
+// The real CLI writes token counts to the rollout as the turn goes, so a
+// call that fails or is stopped mid-turn still leaves what it spent there.
 if (process.env.CODEX_HOME)
   writeRollout(process.env.CODEX_HOME, threadId, response, turnTokens, total);
+if (response.delayMs) await sleep(response.delayMs);
+if (response.stderr) process.stderr.write(response.stderr);
 
 const failures = {
   usage_limit: "You’ve hit your usage limit. Try again at 3:15 PM.",

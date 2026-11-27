@@ -47,7 +47,7 @@ adapter the script's absolute path through its `command` option.
 | `MOCK_CLI_SCENARIO` | The scenario file. Without it, every call answers `{"findings":[]}`. |
 | `MOCK_CLI_STATE` | Where use counts are kept. Default: the scenario path plus `.state.json`. Delete it to restart a scenario. |
 | `MOCK_CLI_LOG` | A file that gets one JSON line per call, with the arguments, prompt, and chosen response. |
-| `CODEX_HOME` | When set, the `codex` mock writes a session rollout file under `CODEX_HOME/sessions`, as the real CLI does, with the scenario's `rateLimits` and the thread's token totals. A resumed call reports the thread's total tokens on `turn.completed`, as Codex does. Without it, the mock writes nothing, so it never touches your real `~/.codex`. |
+| `CODEX_HOME` | When set, the `codex` mock writes a session rollout file under `CODEX_HOME/sessions`, as the real CLI does, with the scenario's `rateLimits` and the thread's token totals. The mock writes it before `delayMs` and before an `error`, so a call that fails or is stopped still leaves its tokens there. A resumed call reports the thread's total tokens on `turn.completed`, as Codex does. Without it, the mock writes nothing, so it never touches your real `~/.codex`. |
 
 ## Scenario file
 

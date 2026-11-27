@@ -13,6 +13,9 @@ export class DecisionNeeded extends Error {
 
 /** Thrown when the caller is cancelled, or its driver stopped. */
 export class RunCancelled extends Error {
+  /** The tokens a stopped call spent before it stopped, when its adapter could tell. */
+  tokens: unknown = undefined;
+
   constructor() {
     super("The run was cancelled.");
     this.name = "RunCancelled";
