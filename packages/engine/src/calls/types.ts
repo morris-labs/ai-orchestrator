@@ -128,10 +128,32 @@ export function newCallLedger(): CallLedger {
   return { counters: { lease: 0, agent: 0 }, limitedVendors: {} };
 }
 
+/**
+ * The record of one call that failed, ran out of time, hit a limit, or was
+ * stopped: what it spent, and where, so the usage by seat and step counts it.
+ */
+export interface FailedCallRecord {
+  key: string;
+  agentId: string;
+  vendor: Vendor;
+  model: string;
+  seat?: string;
+  step?: string;
+  outcome: "error" | "timeout" | "limited" | "cancelled";
+  error: string;
+  tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
+  elapsedMs: number;
+}
+
 /** Finished calls by key, so a resumed caller doesn't repeat one. */
 export interface CallCache {
   read<T>(key: string): Promise<AgentOutcome<T> | null>;
   write<T>(key: string, outcome: AgentOutcome<T>): Promise<void>;
+  /**
+   * Keeps the record of a call that didn't finish. A resume never reads it,
+   * so the call runs again. Optional: a caller without one keeps no record.
+   */
+  failed?(record: FailedCallRecord): Promise<void>;
 }
 
 /** How the caller shows a wait for a limit, a ceiling, or a person's pause. */
@@ -160,8 +182,8 @@ export interface CallRouting {
   readonly fallbackOrder: readonly Vendor[];
   /** True when `vendor` may take a call in `role`. */
   canTake(vendor: Vendor, role: AgentRole): boolean;
-  /** True when a limit may move the call to another vendor. */
-  movable(spec: AgentCallSpec): boolean;
+  /** True when `limit`, the limit the call's vendor reported, may move the call to another vendor. */
+  movable(spec: AgentCallSpec, limit: VendorLimit): boolean;
   /**
    * The vendor a pending call uses after a person's assignment, given the
    * vendor it would use. `limitOf` reports the vendors that hit a limit.

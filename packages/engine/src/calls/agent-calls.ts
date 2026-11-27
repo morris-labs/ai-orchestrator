@@ -61,6 +61,12 @@ const MAX_SLEEP_MS = 2_000_000_000;
 /** The vendors the engine knows, in a fixed order. */
 const VENDORS = ["claude", "codex", "copilot"] as const;
 
+/**
+ * How long a stopped call waits for its adapter to end the CLI and report
+ * what the call spent, before the call gives up on the report.
+ */
+const STOP_REPORT_MS = 5_000;
+
 const ZERO_USE: LeaseActual = { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 };
 
 /** True for a vendor's answer that didn't match the output schema. */
@@ -354,7 +360,7 @@ export class AgentCalls {
       vendor = this.assigned(spec, vendor);
       const limit = this.limitOf(vendor);
       if (!limit) return vendor;
-      const movable = routing.movable(spec);
+      const movable = routing.movable(spec, limit);
       if (movable) {
         const next = this.fallbackVendor(spec.role, spec.avoid);
         if (next) {
@@ -753,6 +759,27 @@ export class AgentCalls {
             costEstimate: 0,
           });
           await settleLease(spent);
+          try {
+            await host.cache.failed?.({
+              key: spec.key,
+              agentId,
+              vendor,
+              model,
+              ...(spec.seat !== undefined ? { seat: spec.seat } : {}),
+              ...(spec.step !== undefined ? { step: spec.step } : {}),
+              outcome,
+              error: describeError(error),
+              tokens: spent.tokens,
+              elapsedMs,
+            });
+          } catch (recordError) {
+            // The call's own failure says more than this one.
+            log?.warn("Could not save a failed call's record", {
+              runId: host.id,
+              agentId,
+              error: describeError(recordError),
+            });
+          }
           if (outcome === "cancelled") throw new RunCancelled();
           log?.warn("An agent call failed", {
             runId: host.id,
@@ -889,9 +916,28 @@ export class AgentCalls {
     // pile listeners onto its signal.
     const signal = this.signal;
     const own = spec.signal;
+    let call: Promise<unknown> | undefined;
+    let stopping = false;
     const onAbort = () => {
+      stopping = true;
       controller.abort(signal.aborted ? signal.reason : own?.reason);
-      rejectAborted(new RunCancelled());
+      const cancelled = new RunCancelled();
+      if (!call) {
+        rejectAborted(cancelled);
+        return;
+      }
+      // A stopped call spent tokens too: the adapter ends the CLI and puts
+      // what the call spent on its error, so wait a little for it.
+      const giveUp = setTimeout(() => rejectAborted(cancelled), STOP_REPORT_MS);
+      giveUp.unref?.();
+      call
+        .catch((error: unknown) => {
+          cancelled.tokens = (error as { tokens?: unknown } | null)?.tokens;
+        })
+        .finally(() => {
+          clearTimeout(giveUp);
+          rejectAborted(cancelled);
+        });
     };
     if (signal.aborted || own?.aborted) onAbort();
     else {
@@ -918,11 +964,13 @@ export class AgentCalls {
     };
     try {
       // A named session is resumed whatever the method; a continuation needs one.
-      const call =
+      call =
         spec.method === "continueReview"
           ? adapter.continueReview({ ...request, sessionId: sessionId ?? "" })
           : adapter[spec.method](sessionId !== undefined ? { ...request, sessionId } : request);
-      return (await Promise.race([call, guard, aborted])) as AdapterResult<T>;
+      // A call that ends after its stop still counts as stopped.
+      const ended = call.then((result) => (stopping ? aborted : result));
+      return (await Promise.race([ended, guard, aborted])) as AdapterResult<T>;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);

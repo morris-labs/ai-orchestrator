@@ -15,6 +15,7 @@ import {
 import { parseStructuredText, toStrictJsonSchema } from "./output.js";
 import { runProcess } from "./process.js";
 import {
+  AdapterError,
   TEAM_TOKEN_ENV,
   type CliRequest,
   type CliResult,
@@ -144,8 +145,9 @@ export class CodexAdapter extends CliAdapter {
       writeFileSync(schemaFile, JSON.stringify(toStrictJsonSchema(this.jsonSchemaFor(req))));
       // A resumed call's `turn.completed` reports the whole thread's total, so
       // the parser needs the total from before this call to isolate the turn.
-      const before = req.sessionId ? this.readRollout(req.sessionId, req) : null;
-      const parser = new CodexStreamParser(before ? codexRolloutTotals(before) : undefined);
+      const beforeRollout = req.sessionId ? this.readRollout(req.sessionId, req) : null;
+      const before = beforeRollout ? codexRolloutTotals(beforeRollout) : undefined;
+      const parser = new CodexStreamParser(before);
       const prompt = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
       const result = await runProcess({
         command: this.command,
@@ -161,33 +163,47 @@ export class CodexAdapter extends CliAdapter {
         onLine: (line) => parser.push(line),
       });
       const summary = parser.summary();
+      const sessionId = summary.threadId ?? req.sessionId ?? null;
       // Read before any failure check: a failed or limited call's reading is
       // the freshest usage there is, and the only way to learn a limit reset.
-      const rollout = summary.threadId ? this.readRollout(summary.threadId, req) : null;
+      const rollout = sessionId ? this.readRollout(sessionId, req) : null;
       const usage = rollout
         ? codexRateLimitSamples(rollout, this.accountFor(req), this.ceiling)
         : [];
       for (const sample of usage) req.onUsage?.(sample);
+      // A failed or stopped call spent tokens too, so its error carries what
+      // the rollout says it spent.
+      const spent = (error: unknown): unknown => {
+        if (error instanceof AdapterError)
+          error.tokens = failedCallTokens(rollout, before, summary.tokens);
+        return error;
+      };
       const failure = this.processFailure(result, req);
-      if (failure) throw failure;
-      const sessionId = summary.threadId ?? req.sessionId ?? null;
+      if (failure) throw spent(failure);
 
       // `turn.failed` and top-level `error` events are fatal; item-level errors aren't collected.
       if (result.exitCode !== 0 || summary.errors.length > 0 || summary.lastMessage === null) {
-        throw this.exitFailure(
-          result,
-          sessionId,
-          summary.errors.join("\n") || "Codex returned no agent message.",
+        throw spent(
+          this.exitFailure(
+            result,
+            sessionId,
+            summary.errors.join("\n") || "Codex returned no agent message.",
+          ),
         );
       }
 
-      const output = parseStructuredText(
-        "codex",
-        req.outputSchema,
-        summary.lastMessage ?? "",
-        result.stdout,
-        sessionId,
-      );
+      let output: T;
+      try {
+        output = parseStructuredText(
+          "codex",
+          req.outputSchema,
+          summary.lastMessage ?? "",
+          result.stdout,
+          sessionId,
+        );
+      } catch (error) {
+        throw spent(error);
+      }
       const actual = rollout ? codexRolloutModel(rollout) : null;
       return {
         output,
@@ -231,6 +247,30 @@ export class CodexAdapter extends CliAdapter {
   detectLimit(error: unknown): CliLimitInfo | null {
     return limitFromError(error, this.now());
   }
+}
+
+/**
+ * The tokens a failed or stopped call spent: the change in the thread's
+ * rollout total since `before`, or, without a rollout total, the turns that
+ * the stream completed. `undefined` when neither shows any.
+ */
+export function failedCallTokens(
+  rollout: string | null,
+  before: CodexTotals | undefined,
+  streamed: TokenCounts,
+): TokenCounts | undefined {
+  const total = rollout ? codexRolloutTotals(rollout) : undefined;
+  if (!total) return streamed.input > 0 || streamed.output > 0 ? streamed : undefined;
+  const input = Math.max(0, total.input - (before?.input ?? 0));
+  const cached = Math.min(input, Math.max(0, total.cached - (before?.cached ?? 0)));
+  return {
+    input,
+    output: Math.max(0, total.output - (before?.output ?? 0)),
+    // `input_tokens` includes `cached_input_tokens`, which are cache reads.
+    fresh: input - cached,
+    cacheWrite: 0,
+    cacheRead: cached,
+  };
 }
 
 /** The model of the last `turn_context` line in a rollout file, or `null`. */

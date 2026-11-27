@@ -9,6 +9,7 @@ import type {
   BuildDecision,
   BuildPlan,
   BuildPauseReason,
+  BuildPausedBy,
   BuildState,
   BuildStatus,
   BuildStep,
@@ -299,6 +300,11 @@ export class BuildController {
    * so a resolution doesn't resume it until the resume.
    */
   async pause(reason: BuildPauseReason = "owner"): Promise<BuildState> {
+    return this.hold(reason);
+  }
+
+  /** Pauses the build for `reason`, as `pause` describes. */
+  private async hold(reason: BuildPausedBy): Promise<BuildState> {
     this.requireLive("pause");
     const { status, pausedUntil, pausedBy } = this.state;
     const timed = status === "paused" && pausedUntil !== undefined && pausedBy === undefined;
@@ -485,6 +491,7 @@ export class BuildController {
       throw new EngineError("invalid_state", `Build ${this.slug} stops with the engine.`);
     }
     if ((await resolveEscalation(this.ctx, request)) === "owner") return this.state;
+    if (request.cause === "engine_defect") return this.holdForDefect();
     // A cancel under way ends the build, so the resolution doesn't resume it.
     if (!this.resumable() || this.cancelling) return this.state;
     if (this.driver) {
@@ -494,6 +501,22 @@ export class BuildController {
     if (this.state.status === "waiting_escalation") await this.ctx.setStatus("running");
     this.start();
     return this.state;
+  }
+
+  /**
+   * Pauses the build after a resolution that names an engine defect, so no
+   * seat runs until the owner resumes it, after a separate session fixes
+   * the engine. A build that is paused already keeps its pause, which only
+   * the owner's resume ends from now on.
+   */
+  private async holdForDefect(): Promise<BuildState> {
+    if (this.cancelling) return this.state;
+    if (this.state.status === "paused" && this.state.pausedUntil === undefined) {
+      this.ctx.state.pausedBy = "engine_defect";
+      await this.ctx.persist();
+      return this.state;
+    }
+    return this.hold("engine_defect");
   }
 
   /**
