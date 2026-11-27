@@ -213,6 +213,12 @@ to the Project manager, and on to the owner when it changes what the build
 delivers.
 _Avoid_: Blocker, ticket, alert
 
+**Engine defect note**:
+The note that the Project manager writes, through a resolution with the
+`engine defect` cause, when a defect in the engine raised an escalation. The
+build pauses, and a separate session fixes the engine from the note.
+_Avoid_: Bug report, engine fix
+
 ### Team chat
 
 **Team chat**:

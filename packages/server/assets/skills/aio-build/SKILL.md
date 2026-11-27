@@ -138,6 +138,10 @@ Owner requests during execution map to requests:
   `aio-build status SLUG` shows `paused (idle)`, and the engine sends a
   `build.changed` event with `idle: true`. Change the build's worktree by
   hand only after that.
+- An engine defect: never fix the engine in this session. Resolve the
+  escalation with `--engine-defect`, as the `triage.md` file says, and the
+  engine pauses the build and writes an engine defect note for a separate
+  session.
 - Cancel: `aio-build cancel SLUG`, only on the owner's explicit word.
 - What the agents said: `aio-build messages SLUG [--direct]`.
 - Owner posts that conflict with the plan: `aio-build decisions SLUG`.

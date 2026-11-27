@@ -590,6 +590,11 @@ bounds. It works as follows:
 - A change to acceptance criteria, scope, or milestones goes to the owner. The
   owner decides alone or with the planning team, and the Project manager then
   directs the build team.
+- An escalation that an engine defect raised pauses the build. The Project
+  manager resolves it with the `engine defect` cause and writes an engine
+  defect note in the build directory, and a separate session fixes the
+  engine. The build continues once the owner resumes it. For details, see
+  [Escalations](escalations.md#engine-defects).
 
 The following conditions escalate:
 
