@@ -87,8 +87,15 @@ function request(extra: Partial<BuildMeetingRequestInput> = {}): BuildMeetingReq
   };
 }
 
-/** A world in planning: the Analyst and the Architect answered, and the Critic answers `critic`. */
-async function meetingWorld(critic: MockResponse[]): Promise<BuildWorld> {
+/**
+ * A world in planning: the Analyst and the Architect answered, and the Critic
+ * answers `critic`. The spec's size is `size`: large by default, so the
+ * meeting keeps the full round cap.
+ */
+async function meetingWorld(
+  critic: MockResponse[],
+  size: "small" | "medium" | "large" = "large",
+): Promise<BuildWorld> {
   const world = await buildWorld();
   mkdirSync(join(world.root, ".aio"), { recursive: true });
   writeFileSync(
@@ -97,7 +104,17 @@ async function meetingWorld(critic: MockResponse[]): Promise<BuildWorld> {
   );
   world.script({
     claude: [
-      { match: "You are the Analyst", output: SPEC },
+      {
+        match: "You are the Analyst",
+        output: {
+          ...SPEC,
+          size,
+          recommendation: {
+            ...SPEC.recommendation,
+            flow: size === "large" ? "pipeline" : "single_session",
+          },
+        },
+      },
       { match: ARCHITECT, times: 1, output: DESIGN },
       { match: ARCHITECT, output: REVISED },
     ],
@@ -182,11 +199,44 @@ describe("the Critic meeting", () => {
     expect(world.file(SLUG, "STATUS.md")).toContain(EMPTY_CART);
   });
 
-  it("stops at three rounds by default", async () => {
+  it("stops a large build's meeting at three rounds by default", async () => {
     const world = await meetingWorld([{ match: CRITIC, output: OBJECTION }]);
     const { meeting } = await world.manager.meet(request());
     expect(meeting.status).toBe("round_cap");
+    expect(meeting.roundCap).toBe(3);
     expect(meeting.rounds).toHaveLength(3);
+  });
+
+  it("stops a medium build's meeting after one round by default", async () => {
+    const world = await meetingWorld([{ match: CRITIC, output: OBJECTION }], "medium");
+
+    const { meeting } = await world.manager.meet(request());
+
+    expect(meeting).toMatchObject({ status: "round_cap", roundCap: 1 });
+    expect(meeting.rounds).toHaveLength(1);
+    expect(meeting.open).toEqual([{ seat: "critic", ...OBJECTION.points[0] }]);
+    // One Critic reply, and no revision after the only round.
+    expect(prompts(world, CRITIC)).toHaveLength(1);
+    expect(prompts(world, ARCHITECT)).toHaveLength(1);
+  });
+
+  it("lets the request's round cap override the size's", async () => {
+    const world = await meetingWorld([{ match: CRITIC, output: OBJECTION }], "medium");
+    const { meeting } = await world.manager.meet(request({ rounds: 2 }));
+    expect(meeting).toMatchObject({ status: "round_cap", roundCap: 2 });
+    expect(meeting.rounds).toHaveLength(2);
+  });
+
+  it("tells the Architect to meet the acceptance criteria and not to harden past them", async () => {
+    const world = await meetingWorld([{ match: CRITIC, output: OBJECTION }], "medium");
+    await world.manager.meet(request({ rounds: 2 }));
+    const architect = prompts(world, ARCHITECT);
+    // The first design and the meeting's revision both carry the scope rule.
+    expect(architect).toHaveLength(2);
+    for (const prompt of architect) {
+      expect(prompt).toContain("Meet the acceptance criteria");
+      expect(prompt).toContain("Don't add hardening that no acceptance criterion asks for");
+    }
   });
 
   it("sends a reply that breaks the structure back once", async () => {

@@ -226,6 +226,13 @@ The state of a milestone or build that meets every exit criterion and waits
 only for the owner to merge it.
 _Avoid_: Done, complete, shippable
 
+**Context pack**:
+What a task's agent gets in its prompt so that it doesn't survey the
+repository: the task's excerpt of the build plan, its acceptance criteria,
+and the contents of its contract and owned files. Code assembles it when the
+task starts, and every attempt at the task reuses it.
+_Avoid_: Brief, task bundle
+
 **Escalation**:
 A decision that execution can't make inside the build plan's bounds. It goes
 to the Project manager, and on to the owner when it changes what the build

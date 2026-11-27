@@ -319,7 +319,10 @@ and code takes the turns:
    change. It states a position (object, concern, or no objection), a severity
    (major or minor) for each point, and the reasons.
 3. The proposer revises. The meeting repeats until no major objection
-   remains, or until it reaches its round cap, which defaults to three.
+   remains, or until it reaches its round cap. The build size sets the
+   default cap: one round for a small or medium build, so that planning
+   doesn't grow the design past the acceptance criteria, and three for a
+   large build.
    The Project manager can end the meeting earlier, such as once the plan
    it discusses is frozen. The turn under way stops, and the major
    objections of the last full round stay open.
@@ -388,8 +391,8 @@ Each milestone runs these steps in order:
    tests and locks them.
 3. **Tasks.** Developers work tasks from the task graph in dependency order,
    each in its own Git worktree. Each Developer gets a context pack that code
-   assembles from the task: its owned files, contracts, criteria, tests, and
-   attached decisions.
+   assembles from the task: its owned files, contracts, criteria, and its
+   excerpt of the build plan. See [Context pack](#context-pack).
 4. **Integrate.** The engine merges task branches in dependency order and runs
    the full suite.
 5. **Harden.** The Test engineer tries to break the integrated code. Its bug
@@ -418,6 +421,12 @@ The build size sets which steps run, as the following table shows:
 | Harden | Skipped | Last milestone only | Each milestone |
 | Simplify | Skipped | Last milestone only | Each milestone |
 | Review | Runs | Runs | Runs |
+
+The build size also limits the tasks in the build plan, because each task
+costs a cold Developer start. The plan check refuses a small plan with more
+than one task and a medium plan with more than five, at a freeze and at a
+start. A large plan has no limit. The Contracts step doesn't count as a task.
+Every planning seat hears the limits in its prompt.
 
 ### Contracts
 
@@ -517,6 +526,44 @@ them:
 
 For the dependency rules, the gate's treatment of earlier and later tasks,
 and oscillation, see [Task graph](task-graph.md).
+
+### Context pack
+
+A Developer that surveys the repository before it starts pays for that
+survey on every cold start: in the T2 measurement, each one cost about 2.4M
+tokens in. So the tasks step gives each task's call a context pack in its
+prompt, under the `Context pack` heading, and the prompt tells the agent
+not to survey the repository. The pack holds these parts:
+
+- **Build plan excerpt:** the build title, the task's milestone and its
+  goal, the task's own entry, the tasks it builds on, its tests, the shared
+  files, and the architecture up to 8,000 characters.
+- **Acceptance criteria:** the text of each criterion that the task serves,
+  and no other.
+- **Contract files:** the current contents of each contract file.
+- **Owned files:** the current contents of each owned file, with each glob
+  expanded to the files it matches. An owned file that doesn't exist yet is
+  listed as one the task can create.
+
+The pack bounds its size, so that a task with large files doesn't trade a
+survey for an equally large prompt:
+
+- A file over 24,000 characters goes in by reference: its path, size, and
+  line count, for the agent to read the parts it needs from the worktree.
+- File contents stop at 120,000 characters in all, about 30K tokens. Each
+  file past that point goes in by reference.
+- A binary file goes in by reference.
+- One glob lists at most 200 files, and the pack gives the count of the
+  rest.
+
+The engine builds the pack when the task's first attempt starts and saves
+it as `tasks/TASK/pack.md` in the build directory, with its key and the
+files it includes in `tasks/TASK/pack.json`, where `TASK` is the task ID.
+Every later attempt reuses the saved pack, so a retry and a restarted
+engine send the same text, and the pack says that the worktree holds the
+agent's earlier work. A plan amendment that changes the task's entry, such
+as `own` on a retry, changes the key, and the next attempt gets a fresh
+pack.
 
 ### Task gate
 

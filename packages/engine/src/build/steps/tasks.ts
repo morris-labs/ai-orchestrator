@@ -20,6 +20,7 @@ import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
+import { taskPack } from "../context-pack.js";
 import { finishedWork } from "../finished-work.js";
 import { otherTasks } from "../other-tasks.js";
 import { SeatCallSkipped, type BuildContext } from "../context.js";
@@ -97,7 +98,7 @@ function clarifications(ctx: BuildContext, taskId: string): string[] {
   );
 }
 
-function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask {
+function roleTask(ctx: BuildContext, task: BuildTask, context: string, pack?: string): RoleTask {
   const criteria = new Map(ctx.plan.criteria.map((c) => [c.id, c.text]));
   return {
     id: task.id,
@@ -114,6 +115,7 @@ function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask
       title: ctx.plan.tasks.find((t) => t.id === id)?.title ?? "",
     })),
     context,
+    ...(pack ? { pack } : {}),
   };
 }
 
@@ -266,6 +268,8 @@ async function attempt(
       : undefined;
   const diagnosis = n > 1 ? await readDiagnosis(ctx, task.id, n - 1) : undefined;
   const specialties = await ctx.specialties(task.specialties);
+  // Every attempt reuses the pack that the first one built.
+  const pack = await taskPack(ctx, task);
   let outcome: Awaited<ReturnType<BuildContext["callSeat"]>>;
   try {
     outcome = await ctx.callSeat({
@@ -286,6 +290,7 @@ async function attempt(
           clarifications(ctx, task.id),
           await settledDispute(ctx, task, record.after),
         ),
+        pack,
       ),
     });
   } catch (error) {

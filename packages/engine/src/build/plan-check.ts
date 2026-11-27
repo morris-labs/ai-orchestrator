@@ -1,7 +1,8 @@
-// The checks a build plan must pass before a freeze or a start: every task's
-// role has a role file, every specialty a task names exists, and no seat's
-// placement breaks the single-vendor setting.
-import type { BuildPlan, RoleDefinition } from "@aio/contracts";
+// The checks a build plan must pass before a freeze or a start: the plan
+// keeps to its size's task limit, every task's role has a role file, every
+// specialty a task names exists, and no seat's placement breaks the
+// single-vendor setting.
+import { TASK_LIMITS, taskLimitText, type BuildPlan, type RoleDefinition } from "@aio/contracts";
 import { EngineError } from "../api/core-interface.js";
 import {
   checkPlanSpecialties,
@@ -10,15 +11,24 @@ import {
 } from "./specialties/index.js";
 
 /**
- * Throws `EngineError` `validation` when `plan` names a role or a specialty
- * that doesn't exist, or places a seat on a vendor that its single-vendor
- * setting excludes: that seat could never be placed.
+ * Throws `EngineError` `validation` when `plan` has more tasks than its
+ * size allows, names a role or a specialty that doesn't exist, or places a
+ * seat on a vendor that its single-vendor setting excludes: that seat could
+ * never be placed.
  */
 export async function checkPlan(
-  plan: Pick<BuildPlan, "tasks"> & Partial<Pick<BuildPlan, "singleVendor" | "placements">>,
+  plan: Pick<BuildPlan, "tasks"> & Partial<Pick<BuildPlan, "size" | "singleVendor" | "placements">>,
   roles: ReadonlyMap<string, RoleDefinition>,
   sources: SpecialtySources,
 ): Promise<void> {
+  const size = plan.size ?? "medium";
+  const limit = TASK_LIMITS[size];
+  if (limit !== null && plan.tasks.length > limit) {
+    throw new EngineError(
+      "validation",
+      `The build plan has ${plan.tasks.length} tasks, but ${taskLimitText(size)}. The Contracts step doesn't count as a task. Merge tasks until ${limit} or fewer remain, or change the plan's size.`,
+    );
+  }
   const single = plan.singleVendor ?? null;
   for (const [seat, placement] of Object.entries(plan.placements ?? {})) {
     if (single && placement.vendor !== undefined && placement.vendor !== single) {
