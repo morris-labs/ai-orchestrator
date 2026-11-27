@@ -421,6 +421,10 @@ The engine then acts in the following order:
    with a `ceiling` decision. To go on, assign the role to another vendor or fix
    the vendor's quota, then resume.
 
+A build's review run skips the first step for a limit with a reset time and
+waits for the reset, like every build call. It moves a call only off a quota
+with no reset time.
+
 A rate limit with no reset time blocks its vendor for 15 minutes. When you
 resume or retry a run, the engine forgets the limits it remembers, and when you
 assign a role to a vendor, it forgets that vendor's limit. If the vendor is

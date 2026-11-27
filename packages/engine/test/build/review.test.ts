@@ -1,9 +1,9 @@
 // The review step: a build reviews its diff with one review pipeline run in
 // the build worktree, through the engine build API and the mock vendor CLIs.
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RUNS_DIR } from "@aio/contracts";
+import { RUNS_DIR, type RunState, type Vendor } from "@aio/contracts";
 import { tempDir } from "../tmp.js";
 import {
   CART_DONE,
@@ -11,6 +11,7 @@ import {
   REPORT,
   buildWorld,
   cartPlan,
+  type BuildWorld,
   type MockResponse,
 } from "./harness.js";
 
@@ -67,6 +68,23 @@ function reviewers(fix: MockResponse): MockResponse[] {
 
 interface ReviewFile {
   runId: string;
+}
+
+/** Waits until the review run's state satisfies `done`. */
+async function waitForRun(
+  world: BuildWorld,
+  runId: string,
+  done: (run: RunState) => boolean,
+  ms = 30_000,
+): Promise<RunState> {
+  const end = Date.now() + ms;
+  let run = await world.runs.get(runId);
+  while (Date.now() < end) {
+    if (run && done(run)) return run;
+    await new Promise((r) => setTimeout(r, 25));
+    run = await world.runs.get(runId);
+  }
+  throw new Error(`run ${runId} didn't reach the state; last: ${JSON.stringify(run)}`);
 }
 
 /** The commands a review run's gate ran at its preflight. */
@@ -326,6 +344,74 @@ describe("the review step", () => {
     const finders = world.calls().filter((c) => /Review file group/.test(c.prompt));
     expect(finders.length).toBeGreaterThan(0);
     expect(finders.every((c) => c.prompt.includes("Cart totals use integer cents."))).toBe(true);
+  });
+
+  describe("when the disprover's vendor, Copilot, reports a quota", () => {
+    const fix: MockResponse = {
+      output: { fixed: ["F-0001"], notFixed: [], summary: "Counted the quantity." },
+      writeFiles: { "src/cart.mjs": CART_FIXED },
+      commit: "fix(cart): count item quantity (F-0001)",
+    };
+    /** The disprover calls that reached `vendor`'s mock CLI. */
+    const disproves = (world: BuildWorld, vendor: Vendor) =>
+      world.calls().filter((c) => c.cli === vendor && /[Dd]isprove/.test(c.prompt));
+    /** Copilot answers reviews and fails every disprover call with `quota`. */
+    const copilot = (quota: MockResponse): MockResponse[] => [
+      { match: "[Dd]isprove", ...quota },
+      { output: { findings: [] } },
+    ];
+
+    it("with no reset time, moves the disprover role to Claude without the owner", async () => {
+      const world = await buildWorld({ review: true, copilot: true });
+      world.script({
+        claude: reviewers(fix),
+        codex: reviewers(fix),
+        copilot: copilot({ error: "usage_limit" }),
+      });
+
+      await world.start("cart-total");
+      const state = await world.settle("cart-total");
+
+      expect(state).toMatchObject({ step: "release_ready", status: "paused" });
+      expect(state.escalations).toEqual([]);
+      expect(disproves(world, "copilot")).toHaveLength(1);
+      expect(disproves(world, "claude").length).toBeGreaterThan(0);
+      // The next round works the roles out from the profile again.
+      expect(world.events.ofType("role.reassigned")[0]).toEqual(
+        expect.objectContaining({
+          role: "disprover",
+          from: ["copilot"],
+          to: ["claude"],
+          reason: "limit",
+          effectiveRound: 1,
+        }),
+      );
+    });
+
+    it("with a reset time, waits for the reset and moves no role", async () => {
+      const world = await buildWorld({ review: true, copilot: true });
+      world.script({
+        claude: reviewers(fix),
+        codex: reviewers(fix),
+        copilot: copilot({
+          error: "usage_limit",
+          errorMessage: "You have exceeded your Copilot quota. Try again in 2 hours.",
+        }),
+      });
+
+      await world.start("cart-total");
+      await world.waitFor("cart-total", () =>
+        existsSync(join(world.dir("cart-total"), "review", "run.json")),
+      );
+      const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+      const run = await waitForRun(world, runId, (r) => r.status === "paused");
+
+      expect(run.pausedUntil).toBeTruthy();
+      expect(disproves(world, "copilot")).toHaveLength(1);
+      expect(disproves(world, "claude")).toEqual([]);
+      expect(world.events.ofType("role.reassigned")).toEqual([]);
+      await world.runs.cancel(runId);
+    });
   });
 
   it("waits for the same review run after an engine restart", async () => {

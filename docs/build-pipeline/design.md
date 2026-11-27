@@ -857,6 +857,14 @@ When a vendor hits its limit during a build, the engine waits for the reset.
 It doesn't redirect the call to another vendor, so the rules that require a
 different vendor keep holding.
 
+The build's review run makes one exception. When a role's vendor reports a
+quota with no reset time, such as a monthly quota, the run moves the role to
+the next vendor that can take it, as any review run does, and emits
+`role.reassigned` with the vendor that lost the role and the reason `limit`.
+The cross-vendor rules still hold for the move. With no such vendor, the run
+stops at a `ceiling` decision, which becomes a review escalation. The fixer
+never moves.
+
 The Project manager's session makes no engine calls. The engine reads that
 seat's usage from the session's transcript at each digest, as tokens only.
 
