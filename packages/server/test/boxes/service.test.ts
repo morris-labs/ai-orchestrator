@@ -12,6 +12,7 @@ import {
   type Box,
 } from "@aio/contracts";
 import { START_SESSION_PATH } from "../../src/docker/scripts.js";
+import { sessionsDirFor } from "../../src/records/env.js";
 import { ApiError } from "../../src/records/errors.js";
 import { commitAll, initRepo, originAndProject, write } from "../worktrees/helpers.js";
 import { assertContractEvent, makeHarness, type Harness } from "./harness.js";
@@ -1143,6 +1144,108 @@ describe("edit, platform, side sessions, messages", () => {
         .map((c) => (c.args[1] as { cmd: string[] }).cmd)
         .filter((cmd) => cmd[1] === "capture-pane");
       expect(captures).toEqual([["tmux", "capture-pane", "-t", `=${box.session}:`, "-p", "-e"]]);
+    });
+
+    /**
+     * A running Claude box in a shared container that acts like Claude Code
+     * and the session watcher: `/clear` rewrites the process's session file
+     * with a new session id, and each other line typed lands in the
+     * transcript of the session that runs then.
+     */
+    async function clearingBox(h: Harness) {
+      const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+      const first = box.sessionUuid as string;
+      const fresh = "6f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+      const dir = sessionsDirFor(h.env, box.container);
+      const entry = (sessionId: string, updatedAt: number) => {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(
+          path.join(dir, "11.json"),
+          JSON.stringify({ pid: 11, procStart: "1", sessionId, updatedAt }),
+        );
+      };
+      entry(first, 1);
+      await h.core.watcher.setRunning([box.id]);
+      const files = {
+        first: h.transcript(boxWorkDir(box), first, [{ type: "summary" }]),
+        fresh: h.core.catalog.transcriptPath(boxWorkDir(box), fresh),
+      };
+      let session = first;
+      let typed = "";
+      h.docker.beforeExec = async (_container, options) => {
+        const [tool, command, , , ...rest] = options.cmd;
+        if (tool !== "tmux" || command !== "send-keys") return;
+        if (rest[0] === "-l") typed = rest.at(-1) ?? "";
+        else if (rest[0] === "Enter" && typed === "/clear") {
+          session = fresh;
+          entry(fresh, 2);
+          await h.core.watcher.scan();
+        } else if (rest[0] === "Enter") {
+          const line = {
+            type: "user",
+            message: { role: "user", content: typed },
+            sessionId: session,
+          };
+          const file = session === first ? files.first : files.fresh;
+          fs.appendFileSync(file, `${JSON.stringify(line)}\n`);
+        }
+      };
+      return { box, files };
+    }
+
+    it("clears an idle session before a message that asks for it, and confirms the message in the fresh session's transcript", async () => {
+      const h = makeHarness();
+      const { box, files } = await clearingBox(h);
+      const result = await h.core.boxes.deliver(box.id, {
+        text: "[aio-build cart I2] Start a fresh session. Read /work/h.md",
+        marker: "[aio-build cart I2]",
+        clear: true,
+      });
+      expect(result).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual([
+        "-l /clear",
+        "Enter",
+        "-l [aio-build cart I2] Start a fresh session. Read /work/h.md",
+        "Enter",
+      ]);
+      expect(fs.readFileSync(files.fresh, "utf8")).toContain("[aio-build cart I2]");
+      expect(fs.readFileSync(files.first, "utf8")).not.toContain("[aio-build cart I2]");
+    });
+
+    it("doesn't clear a busy session: the message waits, and nothing is typed", async () => {
+      const h = makeHarness();
+      const { box } = await clearingBox(h);
+      const rule = "─".repeat(60);
+      h.docker.containers
+        .get(box.container)
+        ?.screens?.set(
+          box.session,
+          `✻ Waiting for 2 background agents to finish\n\n${rule}\n❯\u00a0\n${rule}\n  ⏵⏵ auto mode on\n`,
+        );
+      const result = await h.core.boxes.deliver(box.id, {
+        text: "[aio-build cart I2] Read /work/h.md",
+        marker: "[aio-build cart I2]",
+        clear: true,
+      });
+      expect(result).toMatchObject({ delivered: false, reason: expect.stringContaining("busy") });
+      expect(keys(h, box)).toEqual([]);
+    });
+
+    it("doesn't clear a session whose transcript shows the message already", async () => {
+      const h = makeHarness();
+      const { box, files } = await clearingBox(h);
+      fs.appendFileSync(
+        files.first,
+        `${JSON.stringify({ type: "user", message: { content: "[aio-build cart I2] Read x" } })}\n`,
+      );
+      expect(
+        await h.core.boxes.deliver(box.id, {
+          text: "[aio-build cart I2] Read x",
+          marker: "[aio-build cart I2]",
+          clear: true,
+        }),
+      ).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual([]);
     });
 
     it("types into an empty input box that shows a dim prompt suggestion", async () => {

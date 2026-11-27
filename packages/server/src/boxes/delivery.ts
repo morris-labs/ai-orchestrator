@@ -19,8 +19,13 @@
 //   typed twice. A message without a marker can repeat earlier text, such as
 //   a hold or a usage alert, so it's always typed, and only a new copy of
 //   its text in the transcript confirms it.
+// - A message can ask for a cleared session, such as the Project manager's
+//   milestone hand-off. Claude Code's `/clear` starts a fresh conversation
+//   with a new session ID, so the server clears only an idle session, waits
+//   for the input box to show again, and reads the transcript from the box's
+//   record each time, which the session watcher updates to the new ID.
 import type { Platform } from "@aio/contracts";
-import { claudeInputState, stripEscapes } from "./session-input.js";
+import { claudeInputState, claudeSessionBusy, stripEscapes } from "./session-input.js";
 
 /** How long delivery waits, in milliseconds. */
 export interface DeliveryTiming {
@@ -51,6 +56,12 @@ export interface DeliveryRequest {
    * copy of the text than it did before.
    */
   marker?: string;
+  /**
+   * Clears the session before the message: Claude Code's `/clear` starts a
+   * fresh conversation. The server clears only an idle session, so a busy
+   * one makes the message wait.
+   */
+  clear?: boolean;
 }
 
 export type DeliveryResult =
@@ -103,6 +114,48 @@ async function confirm(
 }
 
 /**
+ * Clears an idle Claude Code session that shows its empty input box, as
+ * `screen` captured it: types `/clear`, sends Enter on its own, and waits
+ * for the input box to show again, empty and idle. Returns true once the
+ * session is ready for the next message, or the reason it isn't.
+ */
+async function clearSession(
+  target: DeliveryTarget,
+  screen: string,
+  timing: DeliveryTiming,
+): Promise<true | string> {
+  // `/clear` while a turn runs would cut the turn short, so a busy session waits.
+  if (claudeSessionBusy(screen)) {
+    return "The session is busy, and the server clears a session only while it's idle.";
+  }
+  await target.tmux(["send-keys", "-l", "--", "/clear"]);
+  await sleep(timing.pauseMs ?? 500);
+  await target.tmux(["send-keys", "Enter"]);
+  const waitMs = timing.confirmMs ?? 10_000;
+  let end = Date.now() + waitMs;
+  let enterAgain = true;
+  for (;;) {
+    const now = await target.tmux(["capture-pane", "-p", "-e"]);
+    const state = claudeInputState(now);
+    if (state.state === "ready" && !claudeSessionBusy(now)) return true;
+    if (Date.now() >= end) {
+      // Enter that read as part of a paste leaves `/clear` in the input
+      // box: the input box is ours then, so one more Enter sends it.
+      if (enterAgain && state.state === "draft" && stripEscapes(now).includes("/clear")) {
+        enterAgain = false;
+        await target.tmux(["send-keys", "Enter"]);
+        end = Date.now() + waitMs;
+        continue;
+      }
+      return `The session didn't show its empty input box after /clear: ${
+        state.state === "ready" ? "it's busy." : state.reason
+      }`;
+    }
+    await sleep(timing.pollMs ?? 250);
+  }
+}
+
+/**
  * Types `request.text` into a Claude Code session and presses Enter, only
  * when the input box shows and is empty, and confirms the message from the
  * transcript. Refuses every other session.
@@ -124,9 +177,16 @@ export async function deliverToSession(
   // Text alone can repeat, so only a copy beyond the ones there now counts.
   const seen = (await count(target, marker)) ?? 0;
   if (request.marker !== undefined && seen > 0) return { delivered: true, confirmed: true };
-  const before = request.marker !== undefined ? 0 : seen;
-  const input = claudeInputState(await target.tmux(["capture-pane", "-p", "-e"]));
+  let before = request.marker !== undefined ? 0 : seen;
+  const start = await target.tmux(["capture-pane", "-p", "-e"]);
+  const input = claudeInputState(start);
   if (input.state !== "ready") return { delivered: false, reason: input.reason };
+  if (request.clear) {
+    const cleared = await clearSession(target, start, timing);
+    if (cleared !== true) return { delivered: false, reason: cleared };
+    // The fresh session has a transcript of its own.
+    if (request.marker === undefined) before = (await count(target, marker)) ?? 0;
+  }
   // `--` keeps a message that starts with `-` from being read as flags.
   await target.tmux(["send-keys", "-l", "--", request.text]);
   await sleep(timing.pauseMs ?? 500);

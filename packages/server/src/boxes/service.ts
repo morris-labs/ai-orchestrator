@@ -1533,7 +1533,9 @@ export class BoxService {
     };
     const transcript = async (): Promise<string | null> => {
       if (request.confirm === false) return null;
-      const file = await this.transcriptFile(box);
+      // A `/clear` gives the session a new id, which the session watcher
+      // writes to the record, so each read looks the record up again.
+      const file = await this.transcriptFile(this.get(id));
       if (!file) return null;
       try {
         return await fs.promises.readFile(file, "utf8");

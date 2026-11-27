@@ -141,6 +141,30 @@ describe("delivery to the Project manager", () => {
     ]);
   });
 
+  it("asks to clear the session before a hand-off pointer, and only before one", async () => {
+    const w = world();
+    open = w.delivery;
+    const i1 = item("I1", "E1");
+    const i2: PmItem = {
+      ...item("I2", "milestone-M1"),
+      kind: "handoff",
+      summary: "Start a fresh Project manager session from this hand-off file.",
+      file: "handoffs/milestone-M1.md",
+      path: "/work/shop/.aio/builds/cart-total/handoffs/milestone-M1.md",
+      needsAnswer: false,
+    };
+    w.items.push(i1, i2);
+
+    w.delivery.ingest(w.added(i2));
+    await w.delivery.idle();
+
+    expect(w.typed.map((t) => t.request)).toEqual([
+      { text: pmPointer("cart-total", i1), marker: "[aio-build cart-total I1]" },
+      { text: pmPointer("cart-total", i2), marker: "[aio-build cart-total I2]", clear: true },
+    ]);
+    expect(w.items.every((i) => i.deliveredAt !== null)).toBe(true);
+  });
+
   it("leaves an item waiting without an error while the box is stopped, and delivers it when the box starts", async () => {
     const w = world({ running: false });
     open = w.delivery;
