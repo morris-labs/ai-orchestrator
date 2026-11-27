@@ -6,6 +6,43 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Added
+
+- Build pipeline, phase 2. The Analyst recommends a flow for each build,
+  and `aio-build freeze` takes `--flow pipeline` or `--flow single-session`.
+  The single-session flow runs one Developer session against the approved
+  criteria, then one review run whose fixer resumes that session, then
+  release ready.
+- The Project manager gets a hand-off file at each milestone end, and the
+  server clears its Claude Code session before it delivers the hand-off.
+- Each Developer call gets a context pack: its owned files, the contracts,
+  its part of the build plan, and its criteria.
+- The Analyst gives each question a recommended answer. The build plan lists
+  the answers that change no criterion as defaulted answers, and the Project
+  manager asks the owner only about the rest.
+- `aio-build resolve --engine-defect` pauses a build for an engine defect
+  and writes a note for a separate session.
+- The `aio-box-review` command in a box starts a review run of the box's own
+  branch through the secrets broker and waits for its result.
+- The Analyst's usage estimate comes from the corrected usage of finished
+  builds of the same size.
+
+### Changed
+
+- A medium build has at most five tasks and a small build one. A medium
+  build's Critic meeting runs one round. The Architect meets the acceptance
+  criteria without adding hardening that no criterion asks for.
+- A build's review run moves a role to another vendor that the profile
+  allows when the role's vendor reports a quota with no reset time.
+
+### Fixed
+
+- A failed or stopped call recorded no tokens. Codex calls, and stopped
+  calls of every vendor, now record their usage.
+- A team chat message could start a turn while a build was paused, and a
+  paused build lost its pause on an engine restart.
+- The build usage alert counted tokens out against an estimate of tokens in.
+
 ## [3.3.1] - 2026-11-26
 
 ### Fixed
