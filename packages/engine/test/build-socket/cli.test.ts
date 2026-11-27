@@ -176,7 +176,57 @@ describe("aio-build", () => {
       action: "retry",
       own: ["src/api.ts", "test/routes.test.ts"],
     });
+    expect(
+      await resolve(["retry", "--engine-defect", "--note", "The gate reads the wrong file."]),
+    ).toMatchObject({
+      action: "retry",
+      cause: "engine_defect",
+      note: "The gate reads the wrong file.",
+    });
     expect(builds.resolve.mock.calls[0]?.[0]).toBe("cart-total");
+  });
+
+  it("prints an engine defect pause and its note", async () => {
+    const { builds, run } = await world();
+    builds.resolve.mockResolvedValueOnce({
+      ...buildState,
+      status: "paused",
+      pausedBy: "engine_defect",
+      escalations: [
+        {
+          id: "E1",
+          kind: "attempt_cap",
+          level: "project_manager",
+          taskId: "T1",
+          tasks: ["T1"],
+          summary: "Task T1 failed the task gate on all 4 attempts.",
+          file: "escalations/E1.json",
+          status: "resolved",
+          defectNote: "engine-defects/E1.md",
+          resolution: {
+            action: "retry",
+            by: "project_manager",
+            note: "The gate reads the wrong file.",
+            cause: "engine_defect",
+            changes: [],
+            resolvedAt: "2026-01-01T00:00:00.000Z",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const out = await run([
+      "resolve",
+      "cart-total",
+      "E1",
+      "retry",
+      "--engine-defect",
+      "--note",
+      "x",
+    ]);
+
+    expect(out.stdout).toContain("Paused by: an engine defect, see engine-defects/E1.md");
   });
 
   it("prints each escalation's status and the tasks it pauses", async () => {

@@ -3,6 +3,7 @@
 // context: it rereads this file and the build plan instead. The engine
 // rewrites the file every time it saves the build's state.
 import {
+  engineDefectNote,
   escalationState,
   type BuildContractsProgress,
   type BuildMeeting,
@@ -24,6 +25,18 @@ function contractsLine(contracts: BuildContractsProgress): string {
   return `- Contracts: ${contracts.status} after ${attempts}${commit}${failure}`;
 }
 
+/**
+ * The line for a build that an engine defect paused: the engine defect note
+ * of the latest escalation that named one.
+ */
+function defectLines(state: BuildState): string[] {
+  const note = engineDefectNote(state);
+  if (!note) return [];
+  return [
+    `- Paused for an engine defect: see \`${note}\`. Fix the engine in a separate session; the owner then resumes the build.`,
+  ];
+}
+
 /** Renders the status file for `state`. */
 export function renderStatus(state: BuildState, plan: BuildPlan): string {
   const planned = new Map(plan.tasks.map((t) => [t.id, t]));
@@ -40,6 +53,7 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
     ...(plan.issue ? [`- Issue: ${plan.issue.url}`] : []),
     `- Updated: ${state.updatedAt}`,
     ...(state.note ? [`- Note: ${state.note}`] : []),
+    ...defectLines(state),
     ...(state.contracts ? [contractsLine(state.contracts)] : []),
     "",
     "## Tasks",
