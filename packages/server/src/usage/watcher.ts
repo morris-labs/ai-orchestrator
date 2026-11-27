@@ -187,15 +187,18 @@ export class UsageWatcher {
     const estimate = build?.usageEstimate;
     if (!build || !estimate) return;
     const factor = usageWatchOf(this.opts.settings()).buildEstimateFactor;
-    const total = this.opts.store.buildUsage(buildId).total;
-    const used = total.tokensIn + total.tokensOut;
+    // The estimate covers the seats' tokens in, so the comparison leaves out
+    // tokens out and the Project manager's session, which the total doesn't
+    // count. The engine records a resumed session's own turns only, so the
+    // total counts each session once.
+    const used = this.opts.store.buildUsage(buildId).total.tokensIn;
     if (used <= estimate.high * factor) return;
     this.overEstimate.add(buildId);
     if (this.opts.alerted(buildId)) return;
     this.opts.alert({
       rule: "build_estimate",
       title: `Build ${build.slug} passed ${factor} times its usage estimate`,
-      body: `The build ${build.slug} used ${used.toLocaleString("en-US")} tokens against an estimate of ${estimate.low.toLocaleString("en-US")} to ${estimate.high.toLocaleString("en-US")}.`,
+      body: `The build ${build.slug} used ${used.toLocaleString("en-US")} tokens in against an estimate of ${estimate.low.toLocaleString("en-US")} to ${estimate.high.toLocaleString("en-US")}.`,
       vendor: null,
       account: null,
       window: null,
