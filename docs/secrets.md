@@ -206,6 +206,53 @@ The paragraph names only the command. To tell agents which secrets a project
 uses and how to start the tools that need them, write that in the project's
 `CLAUDE.md` file.
 
+### Start a review run from a box
+
+The broker also serves review requests, so an agent in a box can hand its
+branch to the review pipeline without you. The image includes the
+`aio-box-review` command. In a box's session, run the following command:
+
+```bash
+aio-box-review start
+
+```
+
+The command starts a review run of the box's own branch against
+`origin/main`, waits until the run ends, and prints the confirmed and fixed
+findings. Unless you add `--read-only`, the run fixes what it confirms in the
+box's working tree, so the session holds its edits until the run ends. The
+command takes these options:
+
+- `--base REF` to review against another base, such as `origin/dev`.
+- `--read-only` to review without fixing.
+- `--profile PROFILE` and `--depth DEPTH`, as for `aio review start`.
+- `--no-wait` to print the run's ID and return. To wait for that run later,
+  run `aio-box-review status RUN_ID --wait`, where `RUN_ID` is the printed
+  ID.
+- `--json` to print the run and its findings as JSON.
+
+The server limits each request to the box's own project and branch:
+
+- It takes the project from the broker socket or token that the request
+  arrives on, and the box from `AIO_BOX_ID`, which it sets in every box
+  session. It answers a box of another project as if the box didn't exist.
+- It reviews the branch in the box's record and refuses a `--branch` that
+  names another one. A box without a branch of its own reviews its
+  checked-out branch.
+- It returns only the runs that the asking box started.
+
+The run starts through the same path as **Start review** in the Boxes app,
+so it shows in **AI Orchestrator Review** and on the box as usual.
+
+`aio-box-review` exits with status 0 when the run finished, 1 when it failed
+or was cancelled, 3 when the broker can't be reached, 4 when the server
+refuses the request, and 6 when the run waits for a decision in the Review
+app.
+
+Like a secret, a review request identifies the container and nothing finer:
+any process in the container can name any box of the project. The server
+logs each request with the container, the box, and the run.
+
 ### Credentials for the engine
 
 The engine asks the broker for the credentials it hands the programs it

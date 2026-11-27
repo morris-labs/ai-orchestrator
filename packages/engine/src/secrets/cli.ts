@@ -36,6 +36,9 @@ export const EXIT_CODES: Record<BrokerClientErrorCode, number> = {
   not_found: 4,
   secrets_locked: 5,
   secrets_unavailable: 5,
+  run_not_found: 1,
+  conflict: 1,
+  engine_mismatch: 1,
   validation: 1,
   internal: 1,
 };
