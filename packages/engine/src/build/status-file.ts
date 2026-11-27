@@ -6,11 +6,22 @@ import {
   engineDefectNote,
   escalationState,
   type BuildContractsProgress,
+  buildFlowText,
   type BuildMeeting,
   type BuildPlan,
   type BuildPlanning,
   type BuildState,
+  type FlowRecommendation,
 } from "@aio/contracts";
+
+/** The Analyst's recommendation line, or none for a plan without one. */
+function recommendationLines(recommendation: FlowRecommendation | null | undefined): string[] {
+  if (!recommendation) return [];
+  const risk = recommendation.highRisk ? "high-risk" : "not high-risk";
+  return [
+    `- Recommended flow: ${buildFlowText(recommendation.flow)} (${risk}). ${cell(recommendation.reason)}`,
+  ];
+}
 
 function cell(text: string | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
@@ -51,6 +62,9 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
     `- Branch: \`${state.branch}\`, in the worktree \`${state.worktree}\``,
     `- Base: \`${state.base}\``,
     ...(plan.issue ? [`- Issue: ${plan.issue.url}`] : []),
+    // A plan frozen before the flow choice runs as a pipeline build.
+    `- Flow: ${buildFlowText(plan.flow ?? "pipeline")}`,
+    ...recommendationLines(plan.recommendation),
     `- Updated: ${state.updatedAt}`,
     ...(state.note ? [`- Note: ${state.note}`] : []),
     ...defectLines(state),
@@ -95,6 +109,7 @@ export function renderPlanningStatus(
     "",
     "- Status: planning",
     ...(planning.issue ? [`- Issue: ${planning.issue.url}`] : []),
+    ...recommendationLines(planning.recommendation),
     `- Updated: ${planning.updatedAt}`,
     "",
     "## Planning calls",
@@ -123,10 +138,10 @@ export function renderPlanningStatus(
     "## Frozen plans",
     "",
     ...(planning.frozen.length === 0
-      ? ["None. A freeze needs the owner's approval and push answer."]
+      ? ["None. A freeze needs the owner's approval, push answer, and flow choice."]
       : planning.frozen.map(
           (f) =>
-            `- Version ${f.version}: \`${f.file}\`, frozen ${f.frozenAt}. Push: ${f.push ? "allowed" : "not allowed"}.`,
+            `- Version ${f.version}: \`${f.file}\`, frozen ${f.frozenAt}. Push: ${f.push ? "allowed" : "not allowed"}. Flow: ${buildFlowText(f.flow)}.`,
         )),
     "",
   ];

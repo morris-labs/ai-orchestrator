@@ -419,6 +419,13 @@ export class EngineBuildManager implements BuildManager {
         `Build ${slug} has no frozen plan. Freeze one with aio-build freeze, or start the build with a plan file.`,
       );
     }
+    if (plan.flow === "single_session") {
+      throw new EngineError(
+        "validation",
+        `Build ${slug}'s plan chooses the single-session flow, and the single-session flow isn't built yet. ` +
+          "Tell the owner, and to run the build as a pipeline build, freeze it again with --flow pipeline.",
+      );
+    }
     if (!planner) return { plan };
     const { id, createdAt, boxId } = planner.record;
     return { plan, origin: { id, createdAt, boxId } };

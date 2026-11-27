@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   BuildPlanSchema,
   BuildPlanningSchema,
+  type BuildFlow,
   type BuildPlanInput,
   type BuildSeatRequestInput,
 } from "@aio/contracts";
@@ -27,6 +28,11 @@ const SPEC = {
   usageEstimate: { low: 100_000, high: 400_000 },
   secrets: [],
   services: [],
+  recommendation: {
+    flow: "single_session",
+    highRisk: false,
+    reason: "The change stays in the cart module and touches no stored data.",
+  },
 };
 
 /** What the Architect answers: the design. */
@@ -58,8 +64,9 @@ function seat(seatName: string, extra: Partial<BuildSeatRequestInput> = {}) {
   };
 }
 
-function freeze(extra: { plan?: Record<string, unknown>; push?: boolean } = {}) {
-  return { projectId: PROJECT_ID, boxId: "box-1", slug: SLUG, ...extra };
+/** A freeze request. The owner's flow choice is `pipeline` unless `extra` sets `flow`, even to `undefined`. */
+function freeze(extra: { plan?: Record<string, unknown>; push?: boolean; flow?: BuildFlow } = {}) {
+  return { projectId: PROJECT_ID, boxId: "box-1", slug: SLUG, flow: "pipeline" as const, ...extra };
 }
 
 /** A world whose repository has the `node-dev` specialty and the project's test commands in its policy. */
@@ -398,5 +405,97 @@ describe("starting a frozen build", () => {
       code: "conflict",
     });
     await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({ code: "conflict" });
+  });
+});
+
+describe("the recommended flow", () => {
+  it("records the Analyst's recommendation in the planning record, the status file, and the draft", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.recommendation).toEqual(SPEC.recommendation);
+    const status = world.file(SLUG, "STATUS.md");
+    expect(status).toContain("Recommended flow: single session");
+    expect(status).toContain("not high-risk");
+    expect(status).toContain(SPEC.recommendation.reason);
+    const draft = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "planning/draft.json")));
+    expect(draft.recommendation).toEqual(SPEC.recommendation);
+    expect(draft.flow).toBeNull();
+    // The Analyst hears the size threshold and what counts as high-risk.
+    const analystPrompt = world.calls().find((c) => c.prompt.includes("You are the Analyst"));
+    expect(analystPrompt?.prompt).toContain("single_session");
+    expect(analystPrompt?.prompt).toMatch(/migration/);
+  });
+
+  it("fails an Analyst answer whose recommendation breaks the size threshold", async () => {
+    const world = await planningWorld();
+    world.script({
+      claude: [
+        {
+          match: "You are the Analyst",
+          output: {
+            ...SPEC,
+            size: "medium",
+            recommendation: { flow: "pipeline", highRisk: false, reason: "It is medium." },
+          },
+        },
+      ],
+    });
+    await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/recommendation/),
+    });
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.recommendation).toBeNull();
+  });
+
+  it("refuses a freeze without the owner's flow choice and names the recommendation", async () => {
+    const world = await planningWorld();
+    await plan(world);
+    await expect(
+      world.manager.freeze(freeze({ push: true, flow: undefined })),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/ask the owner.*single session.*--flow/is),
+    });
+    expect(JSON.parse(world.file(SLUG, "planning.json")).frozen).toEqual([]);
+  });
+
+  it("records the owner's override of the recommendation and runs a pipeline build", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const answer = await world.manager.freeze(freeze({ push: false, flow: "pipeline" }));
+    expect(answer.frozen.flow).toBe("pipeline");
+    expect(answer.plan).toMatchObject({ flow: "pipeline", recommendation: SPEC.recommendation });
+    expect(world.file(SLUG, "STATUS.md")).toMatch(/Version 1:.*Flow: pipeline/);
+
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    await world.settle(SLUG);
+    expect(BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "plan.json"))).flow).toBe("pipeline");
+    const status = world.file(SLUG, "STATUS.md");
+    expect(status).toContain("- Flow: pipeline");
+    expect(status).toContain("Recommended flow: single session");
+  });
+
+  it("records a single-session choice and refuses to start it until that flow exists", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const answer = await world.manager.freeze(freeze({ push: false, flow: "single_session" }));
+    expect(answer.frozen.flow).toBe("single_session");
+    expect(answer.plan.flow).toBe("single_session");
+    expect(world.file(SLUG, "STATUS.md")).toMatch(/Version 1:.*Flow: single session/);
+
+    await expect(world.manager.start({ projectId: PROJECT_ID, slug: SLUG })).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/single-session flow isn't built yet.*--flow pipeline/s),
+    });
+    expect(await world.manager.get(SLUG)).toBeNull();
+    expect(await world.manager.planning(SLUG)).toMatchObject({
+      frozen: [{ version: 1, flow: "single_session" }],
+    });
+    expect(world.calls().some((c) => c.prompt.includes("Task T1"))).toBe(false);
   });
 });

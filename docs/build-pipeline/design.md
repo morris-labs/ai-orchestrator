@@ -96,6 +96,21 @@ sets the seats, as the following table shows:
 | Medium | A settings page | The full planning team, with one Critic meeting | Up to three Developers in parallel |
 | Large | A new app | The full planning team, with a Critic meeting for each milestone plan | The release train by default, with the Integrator on call |
 
+### Flow
+
+The Analyst also recommends a flow. A small or medium task that isn't
+high-risk gets the single-session flow: one Developer session, one review
+run, and a fix pass in the same session. A large task or a high-risk one
+gets the pipeline. A task is high-risk when it changes stored data, runs a
+migration, or crosses an account or security boundary across several
+packages. The engine refuses a spec whose recommendation breaks this rule.
+
+The Project manager shows the recommendation to the owner before planning
+goes further. The owner can choose either flow, and the freeze records the
+choice (`aio-build freeze --flow`) in the frozen version, the build plan's
+`flow` field, and the status file. Until the single-session flow ships, a
+start refuses a plan that chooses it.
+
 ## Team
 
 The following sections list the roles. Each role is a Markdown file with YAML

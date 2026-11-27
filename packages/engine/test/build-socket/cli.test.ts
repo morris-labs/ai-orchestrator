@@ -428,6 +428,33 @@ describe("aio-build", () => {
     expect(out.stdout).toContain("Push: allowed");
   });
 
+  it("freezes with the owner's flow choice and prints it", async () => {
+    const { builds, run } = await world();
+    builds.freeze.mockResolvedValueOnce({
+      ...freezeAnswer,
+      frozen: { ...freezeAnswer.frozen, flow: "single_session" },
+    });
+    const out = await run(["freeze", "cart-total", "--push", "no", "--flow", "single-session"]);
+    expect(out.code).toBe(0);
+    expect(builds.freeze.mock.calls[0]![0]).toMatchObject({ push: false, flow: "single_session" });
+    expect(out.stdout).toContain("Flow: single session");
+    await run(["freeze", "cart-total", "--push", "no", "--flow", "pipeline"]);
+    expect(builds.freeze.mock.calls[1]![0]).toMatchObject({ flow: "pipeline" });
+  });
+
+  it("prints the Analyst's recommendation and each frozen version's flow in a planning status", async () => {
+    const { builds, run } = await world();
+    builds.get.mockResolvedValueOnce(null);
+    builds.planning.mockResolvedValueOnce({
+      ...freezeAnswer.planning,
+      recommendation: { flow: "pipeline", highRisk: true, reason: "It runs a migration." },
+    });
+    const out = await run(["status", "cart-total"]);
+    expect(out.code).toBe(0);
+    expect(out.stdout).toContain("Recommended flow: pipeline (high-risk). It runs a migration.");
+    expect(out.stdout).toContain("Frozen plan: version 1, flow pipeline");
+  });
+
   it("freezes a plan file and prints the answer as JSON with --json", async () => {
     const { builds, planFile, run } = await world();
     const out = await run(["freeze", "cart-total", planFile, "--push", "no", "--json"]);
@@ -515,6 +542,8 @@ describe("aio-build", () => {
     [["plan", "cart-total", "Analyst", "brief.md"]],
     [["plan", "cart-total", "analyst", "brief.md", "--issue", "shop#1"]],
     [["freeze", "cart-total", "--push", "maybe"]],
+    [["freeze", "cart-total", "--flow", "solo"]],
+    [["start", "cart-total", "--flow", "pipeline"]],
     [["meet", "cart-total", "brief.md", "--rounds", "0"]],
     [["meet", "cart-total", "brief.md", "--members", "Critic"]],
     [["meeting-post", "cart-total", "meeting-x", "post.md"]],

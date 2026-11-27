@@ -16,6 +16,8 @@ import {
   engineDefectNote,
   escalationState,
   type BuildDecision,
+  buildFlowText,
+  type BuildFlow,
   type BuildFreezeAnswer,
   type BuildMeetingAnswer,
   type BuildIssueInput,
@@ -39,7 +41,8 @@ export const BUILD_USAGE = `Usage:
   aio-build meet SLUG BRIEF_FILE [--members SEAT,...] [--proposer SEAT] [--rounds N] [--json]
   aio-build meeting-post SLUG MEETING POST_FILE [--json]
   aio-build meeting-end SLUG MEETING [--json]
-  aio-build freeze SLUG [PLAN_FILE] [--push yes|no] [--json]
+  aio-build freeze SLUG [PLAN_FILE] [--push yes|no]
+                   [--flow pipeline|single-session] [--json]
   aio-build start SLUG [PLAN_FILE] [--base REF] [--json]
   aio-build status SLUG [--json]
   aio-build pause SLUG [--json]
@@ -87,7 +90,9 @@ Requests:
             .aio/builds/SLUG/plans/; a frozen version never changes. The
             freeze needs the owner's answer to whether the build can push
             its branch and open its pull request: ask the owner, then pass
-            --push yes or --push no.
+            --push yes or --push no. It also needs the owner's flow choice,
+            after you show the owner the Analyst's recommendation: pass
+            --flow pipeline or --flow single-session.
   start     Start build SLUG from its latest frozen plan, or from the plan
             in PLAN_FILE when it has none. The build works on the branch
             build/SLUG in its own worktree. --base REF names the branch,
@@ -162,6 +167,11 @@ Options:
   --rounds N     A meeting's round cap, from 1 to ${MEETING_ROUND_MAX}. Default: 3.
   --push yes|no  The owner's answer to whether the build can push its branch
                  and open its pull request.
+  --flow pipeline|single-session
+                 The owner's flow choice: a pipeline build through the full
+                 build team, or one Developer session plus one review run.
+                 The engine doesn't run the single-session flow yet, so a
+                 start refuses a plan that chooses it.
   --note TEXT    Why, or the clarification itself for clarify.
   --order TASKS  The task IDs in the order they run, separated by commas,
                  such as T2,T1.
@@ -241,7 +251,14 @@ export type BuildCommand =
     }
   | { kind: "meeting-post"; slug: string; meeting: string; postFile: string; json: boolean }
   | { kind: "meeting-end"; slug: string; meeting: string; json: boolean }
-  | { kind: "freeze"; slug: string; planFile: string | null; push: boolean | null; json: boolean }
+  | {
+      kind: "freeze";
+      slug: string;
+      planFile: string | null;
+      push: boolean | null;
+      flow: BuildFlow | null;
+      json: boolean;
+    }
   | { kind: "start"; slug: string; planFile: string | null; base: string | null; json: boolean }
   | { kind: "messages"; slug: string; direct: boolean; json: boolean }
   | { kind: "decisions"; slug: string; json: boolean }
@@ -292,7 +309,7 @@ const KINDS = new Set([
 const OPTIONS: Record<string, readonly string[]> = {
   plan: ["--issue"],
   meet: ["--members", "--proposer", "--rounds"],
-  freeze: ["--push"],
+  freeze: ["--push", "--flow"],
   start: ["--base"],
   resolve: [
     "--note",
@@ -313,6 +330,7 @@ const VALUE_OPTIONS = [
   "--base",
   "--issue",
   "--push",
+  "--flow",
   "--members",
   "--proposer",
   "--rounds",
@@ -339,6 +357,13 @@ function list(text: string): string[] {
 function pushAnswer(answer: string): boolean {
   if (answer !== "yes" && answer !== "no") throw new Error("--push takes yes or no.");
   return answer === "yes";
+}
+
+/** Parses a `--flow` choice. */
+function flowChoice(choice: string): BuildFlow {
+  if (choice === "pipeline") return "pipeline";
+  if (choice === "single-session") return "single_session";
+  throw new Error("--flow takes pipeline or single-session.");
 }
 
 /**
@@ -504,7 +529,15 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
     const planFile = positional[1] ?? null;
     if (kind === "start") return { kind, slug, planFile, base: values.get("--base") ?? null, json };
     const answer = values.get("--push");
-    return { kind, slug, planFile, push: answer === undefined ? null : pushAnswer(answer), json };
+    const flow = values.get("--flow");
+    return {
+      kind,
+      slug,
+      planFile,
+      push: answer === undefined ? null : pushAnswer(answer),
+      flow: flow === undefined ? null : flowChoice(flow),
+      json,
+    };
   }
   if (kind === "resolve") {
     return { kind, slug, resolution: resolution(positional, values, flags), json };
@@ -659,6 +692,13 @@ export function formatPlanning(planning: BuildPlanning): string {
   if (planning.pausedBy) lines.push("Paused by: a box stop");
   if (planning.boxId) lines.push(`Box: ${planning.boxId}`);
   if (planning.issue) lines.push(`Issue: ${planning.issue.url}`);
+  const recommendation = planning.recommendation;
+  if (recommendation) {
+    const risk = recommendation.highRisk ? "high-risk" : "not high-risk";
+    lines.push(
+      `Recommended flow: ${buildFlowText(recommendation.flow)} (${risk}). ${recommendation.reason}`,
+    );
+  }
   lines.push("Seat calls:");
   if (planning.calls.length === 0) lines.push("  none");
   for (const c of planning.calls) {
@@ -674,7 +714,7 @@ export function formatPlanning(planning: BuildPlanning): string {
   const latest = planning.frozen.at(-1);
   lines.push(
     latest
-      ? `Frozen plan: version ${latest.version} (${buildFile(planning.repoPath, planning.slug, latest.file)})`
+      ? `Frozen plan: version ${latest.version}, flow ${buildFlowText(latest.flow)} (${buildFile(planning.repoPath, planning.slug, latest.file)})`
       : "Frozen plan: none",
     `Draft plan, once the spec and the design exist: ${buildFile(planning.repoPath, planning.slug, "planning/draft.json")}`,
     `Status file: ${buildFile(planning.repoPath, planning.slug, "STATUS.md")}`,
@@ -701,6 +741,7 @@ export function formatFreeze(answer: BuildFreezeAnswer): string {
   return [
     `Froze build ${planning.slug}'s plan as version ${frozen.version}: ${buildFile(planning.repoPath, planning.slug, frozen.file)}`,
     `Push: ${frozen.push ? "allowed" : "not allowed"}`,
+    `Flow: ${buildFlowText(frozen.flow)}`,
     ...(answer.plan.issue ? [`Issue: ${answer.plan.issue.url}`] : []),
     `Start the build with: aio-build start ${planning.slug}`,
     "",
@@ -818,8 +859,9 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     body = { ...body, meeting: command.meeting, body: input };
   } else if (command.kind === "meeting-end") {
     body = { ...body, meeting: command.meeting };
-  } else if (command.kind === "freeze" && command.push !== null) {
-    body.push = command.push;
+  } else if (command.kind === "freeze") {
+    if (command.push !== null) body.push = command.push;
+    if (command.flow !== null) body.flow = command.flow;
   } else if (command.kind === "start" && command.base !== null) {
     body.base = command.base;
   } else if (command.kind === "messages") {

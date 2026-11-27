@@ -64,6 +64,44 @@ const RepoPathSchema = z.string().min(1);
 export const BuildSizeSchema = z.enum(["small", "medium", "large"]);
 export type BuildSize = z.infer<typeof BuildSizeSchema>;
 
+/**
+ * How a build runs: `pipeline` through the full build team, or
+ * `single_session` as one Developer session plus one review run. See
+ * "Flow" in the design.
+ */
+export const BuildFlowSchema = z.enum(["pipeline", "single_session"]);
+export type BuildFlow = z.infer<typeof BuildFlowSchema>;
+
+/** A flow as the owner reads it: `pipeline` or `single session`. */
+export function buildFlowText(flow: BuildFlow): string {
+  return flow === "single_session" ? "single session" : "pipeline";
+}
+
+/**
+ * The Analyst's flow recommendation. A task is high-risk when it changes
+ * stored data, runs a migration, or crosses an account or security boundary
+ * across several packages.
+ */
+export const FlowRecommendationSchema = z
+  .object({
+    /** The flow the Analyst recommends. */
+    flow: BuildFlowSchema,
+    /** Whether the task is high-risk. */
+    highRisk: z.boolean(),
+    /** Why the task is or isn't high-risk, in one or two sentences. */
+    reason: z.string().min(1),
+  })
+  .strict();
+export type FlowRecommendation = z.infer<typeof FlowRecommendationSchema>;
+
+/**
+ * The flow the size threshold gives: `single_session` for a small or medium
+ * task that isn't high-risk, and `pipeline` for any other.
+ */
+export function thresholdFlow(size: BuildSize, highRisk: boolean): BuildFlow {
+  return size !== "large" && !highRisk ? "single_session" : "pipeline";
+}
+
 export const BuildTaskSchema = z
   .object({
     id: PlanIdSchema,
@@ -224,9 +262,20 @@ export const BuildSpecSchema = BuildSpecTextSchema.extend({
   usageEstimate: UsageEstimateSchema,
   secrets: z.array(BuildSecretSchema).default([]),
   services: z.array(BuildServiceSchema).default([]),
+  /** The flow the Analyst recommends, which the owner can override either way. */
+  recommendation: FlowRecommendationSchema,
 })
   .strict()
   .superRefine((spec, ctx) => {
+    const { flow, highRisk } = spec.recommendation;
+    const expected = thresholdFlow(spec.size, highRisk);
+    if (flow !== expected) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["recommendation", "flow"],
+        message: `a ${spec.size} task that is ${highRisk ? "" : "not "}high-risk gets the ${expected} flow, not ${flow}`,
+      });
+    }
     for (const id of duplicates(spec.criteria.map((c) => c.id))) {
       ctx.addIssue({
         code: "custom",
@@ -277,6 +326,16 @@ export const BuildPlanSchema = z
     /** The secrets the build needs, which the owner ticks for the project before approval. */
     secrets: z.array(BuildSecretSchema).default([]),
     services: z.array(BuildServiceSchema).default([]),
+    // Both flow fields are optional rather than defaulted, so that a plan
+    // frozen before them keeps its hash.
+    /** The Analyst's flow recommendation. Absent or `null` for a plan without one. */
+    recommendation: FlowRecommendationSchema.nullable().optional(),
+    /**
+     * The owner's flow choice, which can override the recommendation either
+     * way. Absent or `null` means nobody asked the owner yet, and a freeze
+     * needs it. A frozen plan without it runs as a pipeline build.
+     */
+    flow: BuildFlowSchema.nullable().optional(),
     criteria: z.array(BuildCriterionSchema).min(1),
     /** The Architect's architecture, in Markdown. */
     architecture: z.string().min(1).nullable().default(null),
@@ -360,6 +419,8 @@ export function draftBuildPlan(
     usageEstimate: spec.usageEstimate,
     secrets: spec.secrets,
     services: spec.services,
+    recommendation: spec.recommendation,
+    flow: null,
     criteria: spec.criteria,
     architecture: design.architecture,
     sharedFiles: design.sharedFiles,

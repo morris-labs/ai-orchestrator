@@ -62,7 +62,8 @@ unclear, and settle the size first: it decides the path.
 - **Small**: a bug fix or a change that one Developer makes in one task with
   one failing test. You write the plan yourself, with no planning seat and
   no Critic. Copy the `small-plan.json` file beside this skill, fill it in,
-  and go to section 4. Take the `commands` from the `setup`, `tests`,
+  and go to section 4. Fill in its `recommendation` as the Analyst would
+  (see "Recommend the flow"). Take the `commands` from the `setup`, `tests`,
   `typecheck`, and `lint` lists of `$AIO_PROJECT_ROOT/.aio/policy.yaml`.
   The build runs in a fresh worktree, so `setup` must install the
   dependencies, in the same environment as the test commands. When the
@@ -79,10 +80,10 @@ The team path, in order:
 
 1. Analyst: write the brief in your own words, then
    `aio-build plan SLUG analyst BRIEF_FILE [--issue OWNER/NAME#NUMBER]`.
-   Show the owner the spec: criteria, size, usage estimate, secrets, and
-   services. Rerun the seat with a brief of the owner's changes until the
-   owner accepts the spec. When the Analyst's size is small, offer the owner
-   the small path.
+   Show the owner the spec: criteria, size, usage estimate, secrets,
+   services, and the recommended flow (see "Recommend the flow"). Rerun the
+   seat with a brief of the owner's changes until the owner accepts the
+   spec. When the Analyst's size is small, offer the owner the small path.
 2. Architect: `aio-build plan SLUG architect BRIEF_FILE`. Show the
    milestones and the task graph.
 3. Critic: `aio-build meet SLUG BRIEF_FILE`, where the brief says what to
@@ -98,6 +99,31 @@ The team path, in order:
    writes its own draft to `planning/draft.engine.json`. To change the plan
    by hand, edit the draft or a copy of it, and freeze that file.
 
+### Recommend the flow
+
+The Analyst's spec has a `recommendation`: a flow, `pipeline` or
+`single_session`, and a high-risk flag with its reason. A task is
+high-risk when it changes stored data, runs a migration, or crosses an
+account or security boundary across several packages. A small or medium
+task that isn't high-risk gets `single_session`: one Developer session
+plus one review run, which costs less and did as well in the measurements.
+A large task or a high-risk one gets `pipeline`. `aio-build status SLUG`
+and the build's `STATUS.md` file show the recommendation.
+
+Before you call the Architect, show the owner the recommendation in one
+short message: the flow, whether the task is high-risk, and the reason.
+Then ask which flow the owner wants. The owner can override the
+recommendation either way, such as to send a high-risk medium task through
+the pipeline or a large task through a single session. Record the answer
+in your notes, and pass it to the freeze with `--flow` (section 4). Only
+the owner chooses the flow; never assume it.
+
+The engine doesn't run the single-session flow yet. When the owner chooses
+it, say so, freeze with `--flow single-session` to record the choice, and
+stop: `aio-build start` refuses that plan with a message that the flow
+isn't built yet. To run the build anyway, the owner must choose the
+pipeline, and you freeze again with `--flow pipeline`.
+
 Every secret the plan lists must be ticked in the box's **Secrets
 (project)** section before approval; tell the owner which ones.
 
@@ -108,9 +134,11 @@ Planning is done when the owner approves the plan in words.
 1. Ask the owner whether the build can push its branch and open its pull
    request, unless the owner already said so in this conversation. Only the
    owner answers this; never assume it.
-2. Freeze: `aio-build freeze SLUG [PLAN_FILE] --push yes|no`. Leave out
-   `PLAN_FILE` to freeze the draft. A changed plan becomes the next version;
-   frozen versions never change.
+2. Freeze with the owner's push answer and flow choice:
+   `aio-build freeze SLUG [PLAN_FILE] --push yes|no --flow pipeline|single-session`.
+   Leave out `PLAN_FILE` to freeze the draft. A changed plan becomes the
+   next version; frozen versions never change. The build record and the
+   status file show the chosen flow.
 3. Start: `aio-build start SLUG`.
 4. Tell the owner the build runs on the branch `build/SLUG`, that they can
    watch it in the Builds area of the Boxes app, and that you report each

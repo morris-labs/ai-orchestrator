@@ -26,6 +26,11 @@ const SPEC = {
   usageEstimate: { low: 100_000, high: 400_000 },
   secrets: [],
   services: [],
+  recommendation: {
+    flow: "single_session",
+    highRisk: false,
+    reason: "The change stays in the cart module and touches no stored data.",
+  },
 };
 
 const DESIGN = {

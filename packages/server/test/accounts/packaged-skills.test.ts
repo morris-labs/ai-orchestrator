@@ -115,6 +115,8 @@ describe("the aio-build skill", () => {
     expect(plan.size).toBe("small");
     expect(plan.tasks).toHaveLength(1);
     expect(plan.push).toBeNull();
+    expect(plan.flow).toBeNull();
+    expect(plan.recommendation?.flow).toBe("single_session");
   });
 
   it("names only requests that the aio-build command has", () => {
