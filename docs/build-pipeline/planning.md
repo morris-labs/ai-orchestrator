@@ -68,7 +68,9 @@ Replace the following:
   `critic`.
 - `SEAT`: the seat whose latest answer the meeting discusses. The default
   is `architect`.
-- `N`: the round cap, from 1 to 10. The default is 3.
+- `N`: the round cap, from 1 to 10. The default comes from the size in
+  the Analyst's spec: 1 for a small or medium build and 3 for a large build
+  or a build with no spec yet.
 
 Code takes the turns:
 
