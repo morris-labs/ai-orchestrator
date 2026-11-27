@@ -159,7 +159,8 @@ Options:
   --proposer SEAT
                  The seat whose proposal a meeting discusses. Default:
                  architect.
-  --rounds N     A meeting's round cap, from 1 to ${MEETING_ROUND_MAX}. Default: 3.
+  --rounds N     A meeting's round cap, from 1 to ${MEETING_ROUND_MAX}. Default: 1 for a
+                 small or medium build, 3 for a large one.
   --push yes|no  The owner's answer to whether the build can push its branch
                  and open its pull request.
   --note TEXT    Why, or the clarification itself for clarify.
