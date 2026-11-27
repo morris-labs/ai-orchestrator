@@ -167,8 +167,9 @@ the owner chooses the flow; never assume it.
 
 A single-session build runs preflight, then one Developer session against
 the approved criteria, with the task gate after each task, then one review
-run on the whole diff. The review run's confirmed findings go back to that
-same Developer session, and the build ends release ready. It skips the
+run on the whole diff. The build starts that review run itself, so don't
+start one with `aio-box-review`. The review run's confirmed findings go
+back to that same Developer session, and the build ends release ready. It skips the
 Contracts step, tests first, and the Scribe, so it locks no tests and
 writes no decision records, glossary entries, or changelog entry: the
 release-ready digest lists the criteria and the usage by seat and step
@@ -254,6 +255,13 @@ Owner requests during execution map to requests:
 - Cancel: `aio-build cancel SLUG`, only on the owner's explicit word.
 - What the agents said: `aio-build messages SLUG [--direct]`.
 - Owner posts that conflict with the plan: `aio-build decisions SLUG`.
+- A review of the box's own branch, for work done outside a build: run
+  `aio-box-review start`, which starts a review run through the broker,
+  waits until it ends, and prints the confirmed findings, so the owner
+  needs no `aio` command. The run fixes what it confirms in the box's
+  working tree unless you add `--read-only`. A build's branch isn't the
+  box's branch, and the build runs its own review, so never use the
+  command for a build. Run `aio-box-review help` for its options.
 
 The build never merges. After the owner merges, tag and release with the
 `release-versioning` skill only when the owner tells you to.
