@@ -197,6 +197,12 @@ confirmed findings. The recommended flow for a small or medium task that
 isn't high-risk.
 _Avoid_: Baseline (for the flow), solo mode
 
+**Defaulted answer**:
+A planning question that the Project manager answers with the Analyst's
+recommended answer instead of asking the owner, because no answer would
+change an acceptance criterion. The build plan lists each one.
+_Avoid_: Assumption, default
+
 **High-risk task**:
 A task that changes stored data, runs a migration, or crosses an account or
 security boundary across several packages. The Analyst flags it, and

@@ -95,6 +95,24 @@ export const FlowRecommendationSchema = z
 export type FlowRecommendation = z.infer<typeof FlowRecommendationSchema>;
 
 /**
+ * An open question in the Analyst's spec, with the answer the Analyst
+ * recommends. The Project manager takes the recommended answer for a
+ * question that changes no acceptance criterion, and asks the owner the
+ * rest.
+ */
+export const BuildQuestionSchema = z
+  .object({
+    /** The question, in one sentence. */
+    question: z.string().min(1),
+    /** The answer the Analyst recommends, in one or two sentences. */
+    recommendedAnswer: z.string().min(1),
+    /** Whether an answer other than the recommended one would change an acceptance criterion. */
+    changesCriterion: z.boolean(),
+  })
+  .strict();
+export type BuildQuestion = z.infer<typeof BuildQuestionSchema>;
+
+/**
  * The flow the size threshold gives: `single_session` for a small or medium
  * task that isn't high-risk, and `pipeline` for any other.
  */
@@ -285,6 +303,8 @@ export const BuildSpecSchema = BuildSpecTextSchema.extend({
   services: z.array(BuildServiceSchema).default([]),
   /** The flow the Analyst recommends, which the owner can override either way. */
   recommendation: FlowRecommendationSchema,
+  /** The open questions, each with a recommended answer and a criterion flag. */
+  questions: z.array(BuildQuestionSchema).default([]),
 })
   .strict()
   .superRefine((spec, ctx) => {
@@ -447,6 +467,7 @@ export function draftBuildPlan(
   design: BuildDesign,
   extras: BuildPlanExtras,
 ): BuildPlanInput {
+  const defaulted = defaultedAnswers(spec.questions);
   return {
     title: spec.title,
     issue: extras.issue ?? null,
@@ -464,7 +485,19 @@ export function draftBuildPlan(
     tasks: design.tasks,
     commands: extras.commands,
     push: extras.push ?? null,
+    // Absent rather than empty, so that a plan without questions keeps its hash.
+    ...(defaulted.length > 0 ? { defaultedAnswers: defaulted } : {}),
   };
+}
+
+/**
+ * The answers that the Project manager takes by default: the recommended
+ * answer of each question that changes no acceptance criterion.
+ */
+export function defaultedAnswers(questions: readonly BuildQuestion[]): BuildDefaultedAnswer[] {
+  return questions
+    .filter((q) => !q.changesCriterion)
+    .map((q) => ({ question: q.question, answer: q.recommendedAnswer }));
 }
 
 /** A request to start a build. */

@@ -33,7 +33,12 @@ The seats answer as follows:
 
 - The Analyst writes the spec: stories, edge cases, numbered acceptance
   criteria with a verification method for each, a size, a usage estimate,
-  and the secrets and services the build needs.
+  the secrets and services the build needs, a recommended flow, and the
+  open questions. Each question has a recommended answer and a flag for
+  whether another answer would change a criterion. The draft plan's
+  `defaultedAnswers` list takes the recommended answer for each question
+  that changes no criterion, and the Project manager asks the owner only
+  the rest.
 - The Architect writes the design: the architecture, the shared files, the
   milestones, and the task graph. Each task names its specialties, from
   the list of specialties that the engine gives the Architect, and lists

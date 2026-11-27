@@ -104,9 +104,11 @@ The team path, in order:
 1. Analyst: write the brief in your own words, then
    `aio-build plan SLUG analyst BRIEF_FILE [--issue OWNER/NAME#NUMBER]`.
    Show the owner the spec: criteria, size, usage estimate, secrets,
-   services, and the recommended flow (see "Recommend the flow"). Rerun the
-   seat with a brief of the owner's changes until the owner accepts the
-   spec. When the Analyst's size is small, offer the owner the small path.
+   services, the recommended flow (see "Recommend the flow"), and the
+   questions that change a criterion (see "Ask only what changes a
+   criterion"). Rerun the seat with a brief of the owner's changes and
+   answers until the owner accepts the spec. When the Analyst's size is
+   small, offer the owner the small path.
 2. Architect: `aio-build plan SLUG architect BRIEF_FILE`. Show the
    milestones and the task graph.
 3. Critic: `aio-build meet SLUG BRIEF_FILE`, where the brief says what to
@@ -121,6 +123,28 @@ The team path, in order:
    every seat answer, unless you edited it: then it keeps your edits and
    writes its own draft to `planning/draft.engine.json`. To change the plan
    by hand, edit the draft or a copy of it, and freeze that file.
+
+### Ask only what changes a criterion
+
+The Analyst's spec has `questions`: each open question with a
+`recommendedAnswer` and a `changesCriterion` flag. The flag is true when
+another answer would add, remove, or change an acceptance criterion.
+
+- Ask the owner every question whose `changesCriterion` is true, with the
+  recommended answer, so the owner can take it in one word.
+- Don't ask the others. The engine takes their recommended answers and
+  lists them under `defaultedAnswers` in the draft plan; show them to the
+  owner as one list under "Defaulted answers", so the owner can still
+  overrule one.
+- When the owner overrules a defaulted answer, or answers a question with
+  "use your best judgement", rerun the Analyst with a brief of the answer,
+  or edit `defaultedAnswers` in the draft to match.
+
+The build's `STATUS.md` file lists both groups during planning, and the
+hand-off files list the defaulted answers. On the small path, you write the
+plan yourself: settle with the owner only what changes a criterion, and
+list your other assumptions in the plan's `defaultedAnswers`, each as a
+`question` and an `answer`. Plan approval stays the owner's decision.
 
 ### Recommend the flow
 

@@ -10,6 +10,7 @@ import {
   BuildFlowSchema,
   BuildIssueSchema,
   BuildPlanSchema,
+  BuildQuestionSchema,
   FlowRecommendationSchema,
 } from "./builds.js";
 import { IsoDateTimeSchema } from "./common.js";
@@ -97,6 +98,8 @@ export const BuildPlanningSchema = z.object({
   meetings: z.array(PlanningMeetingSchema).default([]),
   /** The flow recommendation of the Analyst's latest valid spec, or `null` before one. */
   recommendation: FlowRecommendationSchema.nullable().default(null),
+  /** The questions of the Analyst's latest valid spec, or none before one. */
+  questions: z.array(BuildQuestionSchema).default([]),
   /**
    * `box` while the build's box is stopped: seat calls and meeting turns
    * wait until the box starts, also across an engine restart. Absent
