@@ -495,8 +495,10 @@ rules, and each build with a third:
   window at 100% always counts.
 - **Jump alert:** the window's usage rose by more than `jump` since the
   lowest reading of the last `jumpMinutes` minutes.
-- **Build estimate alert:** a build's tokens in and out pass
-  `buildEstimateFactor` times the high end of its plan's usage estimate.
+- **Build estimate alert:** a build's tokens in pass `buildEstimateFactor`
+  times the high end of its plan's usage estimate. The count covers the
+  build's agent calls and review runs, with each resumed session counted
+  once, and leaves out the Project manager's session, as the estimate does.
   Each build gets this alert once.
 
 A window rule alerts when it starts to hold, not again while it keeps

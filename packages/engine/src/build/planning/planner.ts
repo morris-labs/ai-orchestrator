@@ -67,6 +67,7 @@ import { seatCallSpec } from "../seat-call.js";
 import { listSpecialties } from "../specialties/index.js";
 import { renderPlanningStatus } from "../status-file.js";
 import { BuildStore } from "../store.js";
+import { usageTableText } from "../usage-history.js";
 import type { TeamChannel } from "../../team/index.js";
 import { Meeting, type MeetingHost } from "./meeting.js";
 
@@ -481,7 +482,12 @@ export class BuildPlanner {
             (await new Git(this.services.runner, this.planning.repoPath).currentBranch()) ?? "HEAD",
           ownedFiles: [],
           criteria: (await this.latest("analyst"))?.criteria ?? [],
-          context: [await this.context(input.omit), ...input.context].join("\n\n"),
+          context: [
+            await this.context(input.omit),
+            // The Analyst's usage estimate scales from the measured builds.
+            ...(seat === "analyst" ? [await usageTableText(this.location.projectRoot)] : []),
+            ...input.context,
+          ].join("\n\n"),
         },
         repoPath: this.planning.repoPath,
         scratchDir: this.store.scratchDir,
