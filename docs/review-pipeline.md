@@ -425,6 +425,11 @@ A build's review run skips the first step for a limit with a reset time and
 waits for the reset, like every build call. It moves a call only off a quota
 with no reset time.
 
+A stand-alone review run, one that no build started, needs no such
+exception: it takes the first step for every limit, a quota with no reset
+time included, so it waits for you only when no other vendor can take the
+role. A build's review run reaches the same `ceiling` decision in that case.
+
 A rate limit with no reset time blocks its vendor for 15 minutes. When you
 resume or retry a run, the engine forgets the limits it remembers, and when you
 assign a role to a vendor, it forgets that vendor's limit. If the vendor is
