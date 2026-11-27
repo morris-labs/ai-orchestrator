@@ -6,6 +6,8 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-11-27
+
 ### Added
 
 - Build pipeline, phase 2. The Analyst recommends a flow for each build,
