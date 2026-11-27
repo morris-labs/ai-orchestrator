@@ -184,6 +184,25 @@ The approved, versioned record of what a build delivers and how: the spec,
 acceptance criteria, architecture, contracts, milestones, and task graph.
 _Avoid_: Spec, PRD, ticket
 
+**Flow**:
+How a build runs after planning: as a pipeline build through the build
+team, or through the single-session flow. The Analyst recommends one, and
+the owner chooses before the freeze.
+_Avoid_: Mode, track
+
+**Single-session flow**:
+The flow in which one Developer session works the approved acceptance
+criteria, one review run checks the result, and the same session fixes the
+confirmed findings. The recommended flow for a small or medium task that
+isn't high-risk.
+_Avoid_: Baseline (for the flow), solo mode
+
+**High-risk task**:
+A task that changes stored data, runs a migration, or crosses an account or
+security boundary across several packages. The Analyst flags it, and
+recommends the pipeline for it whatever its size.
+_Avoid_: Risky task, critical task
+
 **Execution**:
 The unattended phase of a build, in which the engine carries out the build
 plan.

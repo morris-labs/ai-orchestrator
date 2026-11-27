@@ -31,5 +31,11 @@
     "typecheck": [],
     "lint": []
   },
+  "recommendation": {
+    "flow": "single_session",
+    "highRisk": false,
+    "reason": "The fix stays in the cart module and changes no stored data."
+  },
+  "flow": null,
   "push": null
 }

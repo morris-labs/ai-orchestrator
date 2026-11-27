@@ -6,7 +6,12 @@
 import { z } from "zod";
 import { BuildIdSchema, BuildSlugSchema } from "./build-events.js";
 import { RoleNameSchema } from "./build-roles.js";
-import { BuildIssueSchema, BuildPlanSchema } from "./builds.js";
+import {
+  BuildFlowSchema,
+  BuildIssueSchema,
+  BuildPlanSchema,
+  FlowRecommendationSchema,
+} from "./builds.js";
 import { IsoDateTimeSchema } from "./common.js";
 
 /** Where a build's planning record lives, relative to the build directory. */
@@ -44,6 +49,8 @@ export const FrozenPlanSchema = z.object({
   hash: z.string().regex(/^[0-9a-f]{64}$/),
   /** The owner's push answer that the version records. */
   push: z.boolean(),
+  /** The owner's flow choice that the version records. A version from before the choice ran as a pipeline build. */
+  flow: BuildFlowSchema.default("pipeline"),
   frozenAt: IsoDateTimeSchema,
 });
 export type FrozenPlan = z.infer<typeof FrozenPlanSchema>;
@@ -88,6 +95,8 @@ export const BuildPlanningSchema = z.object({
   frozen: z.array(FrozenPlanSchema),
   /** The planning meetings, oldest first. */
   meetings: z.array(PlanningMeetingSchema).default([]),
+  /** The flow recommendation of the Analyst's latest valid spec, or `null` before one. */
+  recommendation: FlowRecommendationSchema.nullable().default(null),
   /**
    * `box` while the build's box is stopped: seat calls and meeting turns
    * wait until the box starts, also across an engine restart. Absent
@@ -131,14 +140,15 @@ export type BuildSeatAnswer = z.infer<typeof BuildSeatAnswerSchema>;
 
 /**
  * A request to freeze the build plan. Absent, `plan` means the draft in
- * `planning/draft.json`. `push` records the owner's push answer over the
- * plan's own.
+ * `planning/draft.json`. `push` records the owner's push answer, and `flow`
+ * the owner's flow choice, over the plan's own.
  */
 export const BuildFreezeRequestSchema = z
   .object({
     ...PlanningScope,
     plan: z.record(z.unknown()).optional(),
     push: z.boolean().optional(),
+    flow: BuildFlowSchema.optional(),
   })
   .strict();
 export type BuildFreezeRequest = z.infer<typeof BuildFreezeRequestSchema>;

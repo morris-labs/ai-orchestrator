@@ -24,6 +24,11 @@ const SPEC = {
   usageEstimate: { low: 1_000_000, high: 2_000_000 },
   secrets: [],
   services: [],
+  recommendation: {
+    flow: "single_session",
+    highRisk: false,
+    reason: "The change stays in the cart module and touches no stored data.",
+  },
 };
 
 /** Runs a one-task medium build whose Developer call reports `tokensIn` tokens in. */

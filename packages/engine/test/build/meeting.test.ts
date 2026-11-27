@@ -26,6 +26,11 @@ const SPEC = {
   usageEstimate: { low: 100_000, high: 400_000 },
   secrets: [],
   services: [],
+  recommendation: {
+    flow: "single_session",
+    highRisk: false,
+    reason: "The change stays in the cart module and touches no stored data.",
+  },
 };
 
 const DESIGN = {
@@ -99,7 +104,17 @@ async function meetingWorld(
   );
   world.script({
     claude: [
-      { match: "You are the Analyst", output: { ...SPEC, size } },
+      {
+        match: "You are the Analyst",
+        output: {
+          ...SPEC,
+          size,
+          recommendation: {
+            ...SPEC.recommendation,
+            flow: size === "large" ? "pipeline" : "single_session",
+          },
+        },
+      },
       { match: ARCHITECT, times: 1, output: DESIGN },
       { match: ARCHITECT, output: REVISED },
     ],

@@ -29,7 +29,14 @@ function planWith(
 }
 
 function freeze(plan: BuildPlanInput) {
-  return { projectId: PROJECT_ID, boxId: "box-1", slug: SLUG, plan, push: true };
+  return {
+    projectId: PROJECT_ID,
+    boxId: "box-1",
+    slug: SLUG,
+    plan,
+    push: true,
+    flow: "pipeline" as const,
+  };
 }
 
 describe("the task limit by build size", () => {

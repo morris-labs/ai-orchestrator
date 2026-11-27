@@ -21,16 +21,19 @@ import {
   BUILD_DRAFT_FILE,
   BUILD_PLANNING_FILE,
   BuildDesignSchema,
+  BuildFlowSchema,
   BuildMeetingSchema,
   BuildPlanSchema,
   BuildSizeSchema,
   BuildPlanningSchema,
   BuildSpecSchema,
   draftBuildPlan,
+  FlowRecommendationSchema,
   taskLimitText,
   VendorSchema,
   meetingRoundCap,
   type BuildFreezeAnswer,
+  buildFlowText,
   type BuildFreezeRequest,
   type BuildIssue,
   type BuildMeeting,
@@ -42,6 +45,7 @@ import {
   type BuildPlanning,
   type BuildSeatAnswer,
   type BuildSeatRequest,
+  type FlowRecommendation,
   type FrozenPlan,
   type PlanningCall,
   type RoleDefinition,
@@ -95,6 +99,19 @@ function askOwner(slug: string): string {
     `The freeze needs the owner's push answer. Ask the owner whether build ${slug} can push ` +
     `its branch build/${slug} and open its pull request, then freeze again with --push yes ` +
     `or --push no.`
+  );
+}
+
+/** The message of a freeze that has no flow choice, with the Analyst's recommendation when there is one. */
+function askOwnerFlow(slug: string, recommendation: FlowRecommendation | null): string {
+  const recommended = recommendation
+    ? ` The Analyst recommends the ${buildFlowText(recommendation.flow)} flow: the task is ` +
+      `${recommendation.highRisk ? "" : "not "}high-risk. ${recommendation.reason}`
+    : "";
+  return (
+    `The freeze needs the owner's flow choice. Ask the owner whether build ${slug} runs ` +
+    `as a pipeline build or as a single session.${recommended} Then freeze again with ` +
+    `--flow pipeline or --flow single-session.`
   );
 }
 
@@ -243,6 +260,7 @@ export class BuildPlanner {
       calls: [],
       frozen: [],
       meetings: [],
+      recommendation: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -525,6 +543,10 @@ export class BuildPlanner {
           parsed.error.issues,
         );
       }
+      if (seat === "analyst" && parsed?.success) {
+        const spec = parsed.data as z.infer<typeof BuildSpecSchema>;
+        this.planning.recommendation = spec.recommendation;
+      }
       call.status = "done";
       call.finishedAt = this.now();
       file.finishedAt = call.finishedAt;
@@ -797,9 +819,19 @@ export class BuildPlanner {
     }
     const push = request.push ?? (typeof raw.push === "boolean" ? raw.push : null);
     if (push === null) throw new EngineError("validation", askOwner(slug));
+    const rawFlow = BuildFlowSchema.safeParse(raw.flow);
+    const flow = request.flow ?? (rawFlow.success ? rawFlow.data : null);
+    if (flow === null) {
+      const recommendation =
+        FlowRecommendationSchema.nullable()
+          .catch(null)
+          .parse(raw.recommendation ?? null) ?? this.planning.recommendation;
+      throw new EngineError("validation", askOwnerFlow(slug, recommendation));
+    }
     const parsed = BuildPlanSchema.safeParse({
       ...raw,
       push,
+      flow,
       issue: raw.issue ?? this.planning.issue,
     });
     if (!parsed.success) {
@@ -826,6 +858,7 @@ export class BuildPlanner {
       file: `plans/v${version}.json`,
       hash,
       push,
+      flow,
       frozenAt: this.now(),
     };
     const path = this.store.path(frozen.file);

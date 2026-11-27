@@ -114,6 +114,11 @@ const SPEC = {
   usageEstimate: { low: 1_000_000, high: 4_000_000 },
   secrets: [],
   services: [],
+  recommendation: {
+    flow: "single_session",
+    highRisk: false,
+    reason: "The change stays in the cart module and touches no stored data.",
+  },
 };
 
 const task = (
@@ -315,9 +320,14 @@ describe("the reliability gate", () => {
       });
       expect(meeting).toMatchObject({ status: "agreed", open: [] });
       expect(meeting.rounds).toHaveLength(1);
-      const { frozen, plan } = await world.manager.freeze({ ...scope, push: false });
-      expect(frozen.version).toBe(1);
-      expect(plan).toMatchObject({ size: "medium", push: false });
+      // The owner overrides the Analyst's single-session recommendation.
+      const { frozen, plan } = await world.manager.freeze({
+        ...scope,
+        push: false,
+        flow: "pipeline",
+      });
+      expect(frozen).toMatchObject({ version: 1, flow: "pipeline" });
+      expect(plan).toMatchObject({ size: "medium", push: false, flow: "pipeline" });
       expect(plan.tasks.map((t) => t.id)).toEqual(["T1", "T2", "T3", "T4"]);
       const planning = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
       expect(planning.calls.map((c) => [c.seat, c.status])).toEqual([
