@@ -261,6 +261,7 @@ export class BuildPlanner {
       frozen: [],
       meetings: [],
       recommendation: null,
+      questions: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -546,6 +547,7 @@ export class BuildPlanner {
       if (seat === "analyst" && parsed?.success) {
         const spec = parsed.data as z.infer<typeof BuildSpecSchema>;
         this.planning.recommendation = spec.recommendation;
+        this.planning.questions = spec.questions;
       }
       call.status = "done";
       call.finishedAt = this.now();
