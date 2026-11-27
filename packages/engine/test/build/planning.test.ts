@@ -1,7 +1,7 @@
 // Planning through the engine build API: the Project manager calls the
 // Analyst and the Architect, freezes the build plan, and starts the build
 // from it, with the mock vendor CLIs.
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -503,6 +503,54 @@ describe("the recommended flow", () => {
     expect(steps).not.toContain("contracts");
     expect(steps).not.toContain("tests_first");
     expect(world.file(SLUG, "STATUS.md")).toContain("- Flow: single session");
+  });
+});
+
+describe("planning state from 3.3", () => {
+  /**
+   * Rewrites the Analyst's saved answer and the planning record to their 3.3
+   * shapes: a spec without `recommendation` or `questions`, and a record
+   * without the fields that came with them.
+   */
+  function toV33(world: BuildWorld): void {
+    const recordPath = join(world.dir(SLUG), "planning.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown> & {
+      calls: { seat: string; file: string }[];
+    };
+    const callPath = join(world.dir(SLUG), record.calls.find((c) => c.seat === "analyst")!.file);
+    const call = JSON.parse(readFileSync(callPath, "utf8")) as { answer: Record<string, unknown> };
+    delete call.answer.recommendation;
+    delete call.answer.questions;
+    writeFileSync(callPath, JSON.stringify(call, null, 2));
+    delete record.recommendation;
+    delete record.questions;
+    writeFileSync(recordPath, JSON.stringify(record, null, 2));
+  }
+
+  it("uses an Analyst spec saved before the recommendation existed", async () => {
+    const world = await planningWorld();
+    await world.manager.plan(seat("analyst"));
+    toV33(world);
+    await world.restart();
+
+    await world.manager.plan(seat("architect"));
+    const architectPrompt = world.calls().find((c) => c.prompt.includes("You are the Architect"));
+    expect(architectPrompt?.prompt).toContain(SPEC.criteria[0]?.text);
+    const draft = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "planning/draft.json")));
+    expect(draft).toMatchObject({ title: SPEC.title, size: "small", recommendation: null });
+
+    const answer = await world.manager.freeze(freeze({ push: true }));
+    expect(answer.plan).toMatchObject({ title: SPEC.title, flow: "pipeline" });
+  });
+
+  it("still refuses an Analyst answer without a recommendation", async () => {
+    const world = await planningWorld();
+    const { recommendation: _recommendation, ...old } = SPEC;
+    world.script({ claude: [{ match: "You are the Analyst", output: old }] });
+    await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/recommendation/),
+    });
   });
 });
 

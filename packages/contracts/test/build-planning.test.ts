@@ -9,6 +9,7 @@ import {
   BuildSocketPlanSchema,
   BuildSocketStartSchema,
   BuildSpecSchema,
+  SavedBuildSpecSchema,
   draftBuildPlan,
 } from "../src/index.js";
 import { roundTrip } from "./helpers.js";
@@ -94,6 +95,19 @@ describe("the planning seats' answers", () => {
       recommendation: { flow: "pipeline", highRisk: true, reason: "It runs a migration." },
     });
     expect(spec.recommendation.flow).toBe("pipeline");
+  });
+
+  it("reads a saved spec from before the recommendation with a null one", () => {
+    const { recommendation: _recommendation, ...old } = analystAnswer;
+    expect(SavedBuildSpecSchema.parse(old).recommendation).toBeNull();
+  });
+
+  it("refuses a saved spec whose recommendation breaks the size threshold", () => {
+    const bad = {
+      ...analystAnswer,
+      recommendation: { flow: "pipeline", highRisk: false, reason: "A reason." },
+    };
+    expect(() => SavedBuildSpecSchema.parse(bad)).toThrow(/recommendation/);
   });
 
   it("refuses a usage estimate whose low end is over its high end", () => {

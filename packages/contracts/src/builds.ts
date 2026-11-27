@@ -288,12 +288,8 @@ function checkMilestones(
   });
 }
 
-/**
- * The Analyst's answer: the spec. Each criterion names its verification
- * method; the size and the usage estimate are the Analyst's estimates, which
- * the owner can change.
- */
-export const BuildSpecSchema = BuildSpecTextSchema.extend({
+/** The fields of the Analyst's spec that every version of it has. */
+const BuildSpecFieldsSchema = BuildSpecTextSchema.extend({
   /** The build plan's title. */
   title: z.string().min(1),
   criteria: z.array(BuildCriterionSchema.extend({ verification: VerificationMethodSchema })).min(1),
@@ -301,13 +297,20 @@ export const BuildSpecSchema = BuildSpecTextSchema.extend({
   usageEstimate: UsageEstimateSchema,
   secrets: z.array(BuildSecretSchema).default([]),
   services: z.array(BuildServiceSchema).default([]),
-  /** The flow the Analyst recommends, which the owner can override either way. */
-  recommendation: FlowRecommendationSchema,
   /** The open questions, each with a recommended answer and a criterion flag. */
   questions: z.array(BuildQuestionSchema).default([]),
-})
-  .strict()
-  .superRefine((spec, ctx) => {
+});
+
+/** Adds an issue for a recommendation that breaks the size threshold, and for each criterion listed twice. */
+function checkSpec(
+  spec: {
+    size: BuildSize;
+    criteria: readonly { id: string }[];
+    recommendation: FlowRecommendation | null;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (spec.recommendation) {
     const { flow, highRisk } = spec.recommendation;
     const expected = thresholdFlow(spec.size, highRisk);
     if (flow !== expected) {
@@ -317,15 +320,42 @@ export const BuildSpecSchema = BuildSpecTextSchema.extend({
         message: `a ${spec.size} task that is ${highRisk ? "" : "not "}high-risk gets the ${expected} flow, not ${flow}`,
       });
     }
-    for (const id of duplicates(spec.criteria.map((c) => c.id))) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["criteria"],
-        message: `criterion ${id} is listed twice`,
-      });
-    }
-  });
+  }
+  for (const id of duplicates(spec.criteria.map((c) => c.id))) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["criteria"],
+      message: `criterion ${id} is listed twice`,
+    });
+  }
+}
+
+/**
+ * The Analyst's answer: the spec. Each criterion names its verification
+ * method; the size and the usage estimate are the Analyst's estimates, which
+ * the owner can change. A new answer must carry a recommendation that keeps
+ * to the size threshold; `SavedBuildSpecSchema` reads saved answers.
+ */
+export const BuildSpecSchema = BuildSpecFieldsSchema.extend({
+  /** The flow the Analyst recommends, which the owner can override either way. */
+  recommendation: FlowRecommendationSchema,
+})
+  .strict()
+  .superRefine(checkSpec);
 export type BuildSpec = z.infer<typeof BuildSpecSchema>;
+
+/**
+ * A saved Analyst spec, which can come from a version before the flow
+ * recommendation: such a spec has a `null` recommendation, and its plan
+ * asks the owner for the flow without one.
+ */
+export const SavedBuildSpecSchema = BuildSpecFieldsSchema.extend({
+  /** The flow the Analyst recommends, or `null` for a spec from before recommendations. */
+  recommendation: FlowRecommendationSchema.nullable().default(null),
+})
+  .strict()
+  .superRefine(checkSpec);
+export type SavedBuildSpec = z.infer<typeof SavedBuildSpecSchema>;
 
 /** The Architect's answer: the architecture, the shared files, the milestones, and the task graph. */
 export const BuildDesignSchema = z
@@ -463,7 +493,7 @@ export interface BuildPlanExtras {
  * applies, so the owner and the Project manager can still change it.
  */
 export function draftBuildPlan(
-  spec: BuildSpec,
+  spec: SavedBuildSpec,
   design: BuildDesign,
   extras: BuildPlanExtras,
 ): BuildPlanInput {
