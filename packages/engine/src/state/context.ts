@@ -148,10 +148,11 @@ export class RunContext {
       fallbackOrder: FALLBACK_ORDER,
       canTake: (vendor, role) => VENDOR_ROLES[vendor].includes(role),
       // The fixer never moves, and a continuation stays with its session. A
-      // build's review run never moves a call either: like every build call,
-      // it waits for the vendor's reset.
-      movable: (spec) =>
-        !build &&
+      // build's review run moves a call only off a quota with no reset time,
+      // which would otherwise wait for the owner; like every build call, it
+      // waits out a limit that names its reset.
+      movable: (spec, limit) =>
+        (!build || limit.until === null) &&
         spec.allowFallback !== false &&
         spec.role !== "fixer" &&
         spec.method !== "continueReview",
