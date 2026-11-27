@@ -23,9 +23,11 @@ import {
   BuildDesignSchema,
   BuildMeetingSchema,
   BuildPlanSchema,
+  BuildSizeSchema,
   BuildPlanningSchema,
   BuildSpecSchema,
   draftBuildPlan,
+  taskLimitText,
   VendorSchema,
   type BuildFreezeAnswer,
   type BuildFreezeRequest,
@@ -722,6 +724,7 @@ export class BuildPlanner {
         skillDirs: this.services.skillDirs(),
       })
     ).map((s) => `\`${s.name}\``);
+    parts.push(taskLimitContext());
     parts.push(
       names.length > 0
         ? `A task can name these specialties, and no others: ${names.join(", ")}. Name the ones whose guidance the task's agents need.`
@@ -865,4 +868,15 @@ export class BuildPlanner {
     this.meetingChannel?.close();
     await this.writeChain;
   }
+}
+
+/**
+ * The task limit by build size, as every planning seat hears it, so that the
+ * Analyst sizes the build and the Architect plans its tasks within it.
+ */
+function taskLimitContext(): string {
+  const limits = BuildSizeSchema.options.map(
+    (size) => taskLimitText(size) ?? `a ${size} build has no task limit`,
+  );
+  return `The plan check refuses a plan with more tasks than its size allows: ${limits.join(", ")}. The Contracts step doesn't count as a task. Plan fewer, larger tasks: each task costs a cold Developer start.`;
 }

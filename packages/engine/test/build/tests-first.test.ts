@@ -246,6 +246,7 @@ describe("the red check", () => {
     });
     const base = cartPlan();
     const plan = cartPlan({
+      size: "medium",
       criteria: [
         { id: "AC1", text: "The cart reports the sum of its item prices." },
         { id: "AC2", text: "One item totals its price." },

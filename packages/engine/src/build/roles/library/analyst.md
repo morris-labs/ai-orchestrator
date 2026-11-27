@@ -121,6 +121,7 @@ rules:
   - Keep the scope to the request. List a gap or an open question in the summary instead of adding scope.
   - List every secret and external service the build needs, so that the owner can provide them before approval. Never write a secret's value.
   - Read the code before you estimate the size and the usage.
+  - Choose a size whose task limit, which your context states, fits the work.
   - >-
     Estimate the usage from the measured builds table in your context, not
     from the request's length. Every seat call rereads the code it works on,

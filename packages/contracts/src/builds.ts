@@ -64,6 +64,27 @@ const RepoPathSchema = z.string().min(1);
 export const BuildSizeSchema = z.enum(["small", "medium", "large"]);
 export type BuildSize = z.infer<typeof BuildSizeSchema>;
 
+/**
+ * The most tasks a build plan of each size can have, or `null` for no limit.
+ * Each task costs a cold Developer start, so a smaller build gets fewer. The
+ * Contracts step doesn't count as a task.
+ */
+export const TASK_LIMITS: Readonly<Record<BuildSize, number | null>> = {
+  small: 1,
+  medium: 5,
+  large: null,
+};
+
+/**
+ * The task limit of `size` as a clause, such as "a medium build has at most 5
+ * tasks", or `null` for a size without a limit.
+ */
+export function taskLimitText(size: BuildSize): string | null {
+  const limit = TASK_LIMITS[size];
+  if (limit === null) return null;
+  return `a ${size} build has at most ${limit} ${limit === 1 ? "task" : "tasks"}`;
+}
+
 export const BuildTaskSchema = z
   .object({
     id: PlanIdSchema,

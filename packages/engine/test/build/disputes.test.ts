@@ -506,6 +506,7 @@ describe("a test dispute in a task that waits", () => {
     world.git(world.root, "add", "-A");
     world.git(world.root, "commit", "-q", "-m", "feat: add a label stub");
     const plan = cartPlan({
+      size: "medium",
       criteria: [
         { id: "AC1", text: "The cart reports the sum of its item prices." },
         { id: "AC2", text: "An item label names the item." },
@@ -553,6 +554,17 @@ describe("a test dispute in a task that waits", () => {
         verdict({ verdict: "amend", reason: "The test wanted double the sum." }, RIGHT_TEST),
       ],
       claude: [
+        // A medium build's tests first ends with the coverage check.
+        {
+          match: "Coverage check",
+          output: {
+            summary: "Read each criterion.",
+            criteria: [
+              { id: "AC1", checked: true, reason: "The test sums two prices." },
+              { id: "AC2", checked: true, reason: "The test names the item." },
+            ],
+          },
+        },
         // After the dispute, T1 reports a missing service and waits for the owner.
         {
           match: "test dispute 1 .*amended",
