@@ -92,7 +92,7 @@ Each response takes these fields, all optional:
 | `errorMessage` | Replaces the error's default text. |
 | `exitCode` | Overrides the exit code. |
 | `stderr` | Text written to stderr. |
-| `delayMs` | Waits this long before answering, to test timeouts. |
+| `delayMs` | Waits this long before answering, to test timeouts. Before it waits, the `claude` mock streams a model response with the call's `tokens`, unless the response has an `error`, so a call stopped during the wait has reported its tokens, as with the real CLI. |
 | `tokens` | `{ "input": N, "output": N }` for the usage report. |
 | `rateLimits` | `{ "primary": PERCENT, "secondary": PERCENT }`: Codex rollout and Claude `rate_limit_event` utilization. |
 | `premiumRequests` | Copilot only: the premium requests the call reports. |

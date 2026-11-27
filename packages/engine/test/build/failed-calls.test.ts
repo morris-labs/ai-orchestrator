@@ -1,8 +1,8 @@
-// The usage of a Codex call that fails or that the engine stops (#100). The
-// Codex adapter reads what the call spent from its rollout file, the call
-// settles its lease with those tokens, and the build writes a call record
-// for it. The mock Codex CLI writes its rollouts in a temporary account
-// folder, never in the real `~/.codex`.
+// The usage of a call that fails or that the engine stops (#100). The Codex
+// adapter reads what the call spent from its rollout file, and the Claude
+// adapter from its stream; the call settles its lease with those tokens, and
+// the build writes a call record for it. The mock Codex CLI writes its
+// rollouts in a temporary account folder, never in the real `~/.codex`.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -113,5 +113,36 @@ describe("a Codex call that fails or stops", () => {
     expect(readFileSync(join(world.dir("cart-stopped"), "events.jsonl"), "utf8")).toContain(
       '"outcome":"cancelled"',
     );
+  });
+});
+
+describe("a Claude call that the engine stops", () => {
+  it("records the tokens its stream reported, in its lease and a call record", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [
+        { match: "Task T1", delayMs: 20_000, tokens: { input: 3000, output: 40 } },
+        CLOSING,
+      ],
+      codex: [CLOSING],
+    });
+
+    await world.start("cart-stopped");
+    await world.waitFor("cart-stopped", () => world.calls().length > 0);
+    // The mock streams its model response right after it logs the call.
+    await new Promise((r) => setTimeout(r, 500));
+    await world.manager.cancel("cart-stopped");
+    await world.waitFor("cart-stopped", (s) => s.closingRecord !== undefined);
+
+    expect(world.jsonFiles("cart-stopped", "calls/failed")).toEqual([
+      expect.objectContaining({
+        vendor: "claude",
+        seat: "developer",
+        step: "tasks",
+        outcome: "cancelled",
+        tokens: expect.objectContaining({ in: 3000, out: 40 }),
+      }),
+    ]);
+    expect(usageBySeatAndStep(world, "cart-stopped")["developer/tasks"]).toEqual([3000, 40]);
   });
 });
