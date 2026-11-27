@@ -78,6 +78,9 @@ theirs.
   lines which milestone finished, the tasks and their attempts, the usage
   by seat, and any escalation or plan change flag. Ask whether to continue
   only when the owner asked to pause after milestones.
+- **Hand-off** (`handoffs/milestone-ID.md`): the state that a fresh
+  session starts from. Follow "The hand-off at each milestone" in the
+  `SKILL.md` file.
 - **Release ready** (`digests/release-ready.md`): tell the owner the branch,
   the pull request if the build opened one, and the owner checks it lists.
   The build never merges.

@@ -17,6 +17,7 @@ inbox survives an engine restart. The engine adds one item for each of these:
 | :-- | :-- | :-- | :-- |
 | An escalation | `E1`, `E2`, and so on | `escalations/ID.json` | Yes |
 | A milestone digest | `milestone-ID` | `digests/milestone-ID.md` | No |
+| A milestone hand-off | `milestone-ID` | `handoffs/milestone-ID.md` | No |
 | The release ready digest | `release-ready` | `digests/release-ready.md` | No |
 | A cancelled build's closing record | `closing-record-1`, `closing-record-2`, and so on | `closing-record.md` | No |
 
@@ -75,6 +76,38 @@ holds these sections:
 The engine runs the tasks of every milestone in one tasks step, so a
 milestone ends when its last task passes. A build plan without milestones
 has one, `all`, that holds every task.
+
+## The Project manager hand-off
+
+The Project manager's context grows with every turn, and each request
+resends it. To keep it the size of one milestone, the Project manager starts
+a fresh session at each milestone end. Right after a milestone's digest,
+the engine writes the milestone's hand-off file from the build's files and
+adds it to the inbox. A hand-off holds these sections:
+
+- **Plan state:** the build's status and step, the plan version, each
+  milestone's progress, and each task's status, attempts, and commit.
+- **Open escalations:** every escalation that waits, with what it pauses
+  and its file.
+- **Owner decisions:** the push answer, the owner's answers to
+  escalations, and the owner posts that the build recorded as decisions.
+- **Defaulted answers:** the planning questions that the build plan's
+  `defaultedAnswers` list answers with the Analyst's recommended answer.
+- **Usage to date:** what the build's settled agent calls spent since the
+  build started, by seat, and the Project manager's own tokens since
+  planning started.
+
+The hand-off's pointer tells the Project manager to start a fresh session
+from the file, and names what comes next:
+
+```
+[aio-build cart-label I2] Start a fresh Project manager session from this hand-off file: milestone M1 (Cart total) is done, and milestone M2 (Labels) is next. Read /work/shop/.aio/builds/cart-label/handoffs/milestone-M1.md
+```
+
+The `aio-build` skill has the Project manager report the digest, triage
+what waits, and ask the owner to type `/clear` in the session. The cleared
+session recovers the build from the newest hand-off file and the inbox,
+and reads digests and escalation files, not diffs or full logs.
 
 ## The Project manager's usage
 
