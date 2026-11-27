@@ -509,11 +509,12 @@ describe("the release ready step", () => {
     const inbox = await world.manager.inbox("cart-total", { all: true });
     expect(inbox.items.map((i) => [i.kind, i.ref])).toEqual([
       ["digest", "milestone-all"],
+      ["handoff", "milestone-all"],
       ["escalation", "E1"],
       ["digest", "release-ready"],
     ]);
-    expect(inbox.items[1]?.answeredAt).not.toBeNull();
-    expect(inbox.items[2]?.pointer).toMatch(/release ready.* Read .*digests\/release-ready\.md$/);
+    expect(inbox.items[2]?.answeredAt).not.toBeNull();
+    expect(inbox.items[3]?.pointer).toMatch(/release ready.* Read .*digests\/release-ready\.md$/);
     expect(gh.created).toEqual([]);
     expect(git(origin, "branch", "--list", "build/*")).toBe("");
   });

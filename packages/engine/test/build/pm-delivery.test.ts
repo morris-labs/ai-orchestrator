@@ -173,7 +173,9 @@ describe("milestone digests", () => {
     const inbox = await world.manager.inbox("cart-label");
     expect(inbox.items.map((i) => [i.kind, i.ref, i.file, i.needsAnswer])).toEqual([
       ["digest", "milestone-M1", "digests/milestone-M1.md", false],
+      ["handoff", "milestone-M1", "handoffs/milestone-M1.md", false],
       ["digest", "milestone-M2", "digests/milestone-M2.md", false],
+      ["handoff", "milestone-M2", "handoffs/milestone-M2.md", false],
     ]);
     expect(inbox.items[0]?.pointer).toMatch(
       /^\[aio-build cart-label I1\] Milestone M1 \(Cart total\) is done: 1 of 2 milestones\..* Read .*digests\/milestone-M1\.md$/,

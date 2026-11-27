@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 import type { AioEvent, BuildMilestone, Escalation, Message } from "@aio/contracts";
 import { PM_SEAT, escalationState } from "@aio/contracts";
 import type { BuildContext } from "./context.js";
+import { handOff } from "./handoff.js";
 import { decisionsFor } from "./owner/index.js";
 import {
   planningStart,
@@ -43,7 +44,7 @@ export function milestonesOf(ctx: BuildContext): BuildMilestone[] {
   ];
 }
 
-interface SeatUsage {
+export interface SeatUsage {
   seat: string;
   calls: number;
   tokensIn: number;
@@ -52,7 +53,7 @@ interface SeatUsage {
 }
 
 /** The usage of the build's settled calls after `from`, by seat, sorted by seat. */
-async function usageSince(ctx: BuildContext, from: string): Promise<SeatUsage[]> {
+export async function usageSince(ctx: BuildContext, from: string): Promise<SeatUsage[]> {
   let text = "";
   try {
     text = await readFile(ctx.store.path("events.jsonl"), "utf8");
@@ -81,7 +82,12 @@ async function usageSince(ctx: BuildContext, from: string): Promise<SeatUsage[]>
   return [...bySeat.values()].sort((a, b) => a.seat.localeCompare(b.seat));
 }
 
-function usageTable(rows: readonly SeatUsage[], pm: TranscriptUsage | null): string[] {
+/** The usage by seat as a Markdown table, or `empty` and the Project manager's row for no calls. */
+export function usageTable(
+  rows: readonly SeatUsage[],
+  pm: TranscriptUsage | null,
+  empty = "No agent call settled in this milestone.",
+): string[] {
   const pmLine =
     pm && pm.turns > 0
       ? [
@@ -90,7 +96,7 @@ function usageTable(rows: readonly SeatUsage[], pm: TranscriptUsage | null): str
       : [];
   if (rows.length === 0) {
     return [
-      "No agent call settled in this milestone.",
+      empty,
       ...(pmLine.length > 0
         ? [
             "",
@@ -196,7 +202,8 @@ async function renderDigest(
 
 /**
  * Writes a digest for each milestone whose tasks are all done and that has
- * no digest yet, and adds each to the Project manager's inbox.
+ * no digest yet, and adds each to the Project manager's inbox, followed by
+ * the milestone's hand-off.
  */
 export async function digestMilestones(ctx: BuildContext): Promise<void> {
   const milestones = milestonesOf(ctx);
@@ -226,5 +233,6 @@ export async function digestMilestones(ctx: BuildContext): Promise<void> {
       file,
       needsAnswer: false,
     });
+    await handOff(ctx, milestone, milestones);
   }
 }
