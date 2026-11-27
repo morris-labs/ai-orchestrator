@@ -186,18 +186,27 @@ waits in `aio-build inbox SLUG`.
 
 At each milestone end, the engine writes the milestone's digest and then a
 hand-off file, `handoffs/milestone-ID.md`, and sends a pointer for each.
-The hand-off pointer starts with `Start a fresh Project manager session
-from this hand-off file`. When it arrives:
+The digest pointer arrives first: report it to the owner, and triage every
+escalation the inbox lists, as for any other item.
 
-1. Finish what waits before it: report the milestone's digest to the
-   owner, and triage every escalation the inbox lists.
-2. Tell the owner the milestone is done and what comes next, and ask them
-   to type `/clear` in this session once it's idle. The cleared session
-   loads this skill with the next pointer, and section 2 recovers the build
-   from the newest hand-off file.
-3. Until the session is cleared, work from the hand-off file as if it were
-   fresh: take the plan state, escalations, decisions, and usage from it,
-   not from earlier turns.
+The server clears your session for the hand-off: once the session is idle
+at its prompt, the server types `/clear`, and then the hand-off pointer,
+which starts with `Start a fresh Project manager session from this hand-off
+file`. So the pointer arrives in a fresh session, without the owner's help.
+When it arrives:
+
+1. Recover the build with section 2. It starts from the hand-off file that
+   the pointer names, the newest one.
+2. Tell the owner the milestone is done and what comes next. Put again any
+   question that the hand-off lists as an open escalation: the owner's
+   earlier conversation with you is gone.
+3. Take the plan state, escalations, decisions, and usage from the
+   hand-off file, not from memory.
+
+Don't ask the owner to type `/clear`. A hand-off pointer that arrives in a
+session with earlier turns, such as one that `aio-build inbox SLUG` lists
+after a missed delivery, still counts: work from the hand-off file as if
+the session were fresh.
 
 The hand-off routine is done when the owner knows the milestone result and
 nothing in `aio-build inbox SLUG` waits for your answer.

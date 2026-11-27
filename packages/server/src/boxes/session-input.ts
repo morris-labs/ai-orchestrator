@@ -118,3 +118,41 @@ export function claudeInputState(screen: string): ClaudeInputState {
   if (text === "" || text.startsWith('Try "')) return { state: "ready" };
   return { state: "draft", reason: "The input box holds text that nobody sent yet." };
 }
+
+/**
+ * A line that Claude Code draws above its input box while a turn runs: a
+ * spinner sign and an active verb that ends in an ellipsis, such as
+ * `✶ Pondering…`, or the wait for background agents. A finished turn leaves
+ * a line in the past tense, such as `✻ Worked for 6m 6s`, which doesn't match.
+ */
+const SPINNER = /^[·✢✳✶✻✽*]\s+(?:\S.*…|Waiting for .* to finish)/;
+const INTERRUPT = /esc to interrupt/i;
+
+/**
+ * Whether Claude Code's screen `screen` shows a turn under way, from the
+ * spinner line above the input box or the interrupt hint. A session that
+ * shows no input box reads as not busy; `claudeInputState` tells why it
+ * can't take a message.
+ */
+export function claudeSessionBusy(screen: string): boolean {
+  const lines = screen.split("\n").map((line) => normalize(stripEscapes(line)));
+  while (lines.length > 0 && lines.at(-1) === "") lines.pop();
+  let prompt = -1;
+  for (let i = lines.length - 2; i >= 1; i--) {
+    const line = lines[i] as string;
+    if (
+      PROMPT.test(line) &&
+      RULE.test(lines[i - 1] as string) &&
+      RULE.test(lines[i + 1] as string)
+    ) {
+      prompt = i;
+      break;
+    }
+  }
+  if (prompt < 0) return false;
+  const near: string[] = lines.slice(prompt + 2);
+  for (let i = prompt - 2; i >= 0 && i >= prompt - 16 && !RULE.test(lines[i] as string); i--) {
+    near.push(lines[i] as string);
+  }
+  return near.some((line) => SPINNER.test(line) || INTERRUPT.test(line));
+}
