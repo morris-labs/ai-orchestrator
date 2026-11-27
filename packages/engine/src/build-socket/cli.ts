@@ -13,6 +13,7 @@ import {
   MEETING_ROUND_MAX,
   MeetingIdSchema,
   RoleNameSchema,
+  engineDefectNote,
   escalationState,
   type BuildDecision,
   type BuildFreezeAnswer,
@@ -49,7 +50,8 @@ export const BUILD_USAGE = `Usage:
   aio-build cancel SLUG [--json]
   aio-build resolve SLUG ESCALATION ACTION [--note TEXT] [--order TASKS]
                     [--decision OPTION] [--waive FINDINGS] [--push yes|no]
-                    [--changes PARTS] [--own FILES] [--owner] [--json]
+                    [--changes PARTS] [--own FILES] [--engine-defect]
+                    [--owner] [--json]
   aio-build help
 
 Plans and drives a build of this box's project through the AI Orchestrator
@@ -136,6 +138,11 @@ Requests:
             pass --owner. For a release ready escalation, ask the owner
             whether the build can push its branch and open its pull
             request, then pass --push yes or --push no with --owner.
+            When an engine defect raised the escalation, pass
+            --engine-defect with the defect in --note: the engine writes
+            an engine defect note in the build directory and pauses the
+            build. Don't fix the engine in this session. A separate session
+            fixes it, and the owner resumes the build.
 
 A build that a box started takes pause, resume, and cancel requests only
 from that box. Any box of the project can read its status.
@@ -173,6 +180,10 @@ Options:
                  engine adds them to the task's owned files in the build
                  plan. A test path, and a file that another unfinished task
                  owns, stay out.
+  --engine-defect
+                 Name an engine defect as the escalation's cause. Needs
+                 --note, which describes the defect, and an action other
+                 than escalate. The build pauses until the owner resumes it.
   --owner        Record the decision as the owner's, which the Project
                  manager relays.
   --direct       Print only the direct messages to the owner.
@@ -291,6 +302,7 @@ const OPTIONS: Record<string, readonly string[]> = {
     "--push",
     "--changes",
     "--own",
+    "--engine-defect",
     "--owner",
   ],
   inbox: ["--all"],
@@ -313,7 +325,7 @@ const VALUE_OPTIONS = [
 ];
 
 /** Options that take no value. */
-const FLAGS = ["--owner", "--all"];
+const FLAGS = ["--owner", "--all", "--engine-defect"];
 
 /** Splits a comma-separated list, dropping empty items. */
 function list(text: string): string[] {
@@ -365,6 +377,7 @@ function resolution(
     ...(push !== undefined ? { push: pushAnswer(push) } : {}),
     ...(changes !== undefined ? { changes: list(changes) } : {}),
     ...(own !== undefined ? { own: list(own) } : {}),
+    ...(flags.has("--engine-defect") ? { cause: "engine_defect" } : {}),
   };
 }
 
@@ -523,6 +536,14 @@ function issueLines(details: unknown): string {
     .join("");
 }
 
+/** Who paused the build, in a few words, with the engine defect note for an engine defect. */
+function pausedByText(build: BuildState): string {
+  if (build.pausedBy === "box") return "a box stop";
+  if (build.pausedBy !== "engine_defect") return "a request";
+  const note = engineDefectNote(build);
+  return `an engine defect${note ? `, see ${note}` : ""}; the owner resumes the build once a separate session fixes the engine`;
+}
+
 /** The build's state as text for a person to read. */
 export function formatBuild(build: BuildState): string {
   const lines = [
@@ -532,8 +553,7 @@ export function formatBuild(build: BuildState): string {
     `Worktree: ${build.worktree}`,
   ];
   if (build.boxId) lines.push(`Box: ${build.boxId}`);
-  if (build.pausedBy)
-    lines.push(`Paused by: ${build.pausedBy === "box" ? "a box stop" : "a request"}`);
+  if (build.pausedBy) lines.push(`Paused by: ${pausedByText(build)}`);
   if (build.pausedUntil) lines.push(`Paused until: ${build.pausedUntil}`);
   if (build.deletedAt) lines.push(`Deleted: ${build.deletedAt}`);
   if (build.note) lines.push(`Note: ${build.note}`);

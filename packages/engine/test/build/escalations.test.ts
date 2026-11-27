@@ -857,3 +857,113 @@ describe("escalation IDs", () => {
     expect(escalationFile(world, "cart-ids", "E2")).toMatchObject({ summary: "Second." });
   });
 });
+
+describe("an engine defect", () => {
+  /** A one-task build whose Developer fails every attempt until a retry. */
+  async function capped(world: BuildWorld): Promise<void> {
+    world.script({
+      claude: [
+        { match: "You are the Debugger", output: DIAGNOSIS },
+        answer("T1", { "src/cart.mjs": CART_DONE }, "attempt 5 of"),
+        answer("T1", { "src/cart.mjs": CART_WRONG }),
+      ],
+    });
+    await world.start(
+      "cart-total",
+      cartPlan({
+        criteria: [{ id: "AC-T1", text: "The cart reports the sum of its item prices." }],
+        tasks: [task("T1", "Cart total", "cart")],
+      }),
+    );
+    await world.settle("cart-total");
+  }
+
+  const DEFECT = "The task gate reads the lint output from the wrong file.";
+
+  it("pauses the build, writes the engine defect note, and goes on after the owner resumes it", async () => {
+    const world = await buildWorld();
+    await capped(world);
+    const before = world.calls().length;
+
+    const paused = await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      cause: "engine_defect",
+      note: DEFECT,
+    });
+
+    expect(paused).toMatchObject({ status: "paused", pausedBy: "engine_defect" });
+    expect(paused.escalations[0]).toMatchObject({
+      status: "resolved",
+      defectNote: "engine-defects/E1.md",
+      resolution: { action: "retry", cause: "engine_defect", note: DEFECT },
+    });
+    const note = world.file("cart-total", "engine-defects/E1.md");
+    expect(note).toContain(DEFECT);
+    expect(note).toContain("E1");
+    expect(note).toContain("attempt_cap");
+    expect(world.file("cart-total", "STATUS.md")).toMatch(
+      /Paused for an engine defect.*engine-defects\/E1\.md/,
+    );
+    expect(escalationFile(world, "cart-total", "E1")).toMatchObject({
+      defectNote: "engine-defects/E1.md",
+    });
+
+    // A box start doesn't resume it, and no seat call starts while it waits.
+    await expect(world.manager.resume("cart-total", "box")).rejects.toMatchObject({
+      code: "invalid_state",
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(world.calls()).toHaveLength(before);
+    expect((await world.manager.get("cart-total"))?.status).toBe("paused");
+
+    // The owner resumes it once the engine is fixed, and the build goes on.
+    await world.manager.resume("cart-total");
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 5 });
+    expect(world.file("cart-total", "STATUS.md")).not.toMatch(/Paused for an engine defect/);
+  });
+
+  it("keeps the engine defect pause across an engine restart", async () => {
+    const world = await buildWorld();
+    await capped(world);
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      cause: "engine_defect",
+      note: DEFECT,
+    });
+
+    await world.restart();
+    expect(await world.manager.get("cart-total")).toMatchObject({
+      status: "paused",
+      pausedBy: "engine_defect",
+    });
+    await world.manager.resume("cart-total");
+    await world.waitFor("cart-total", (s) => s.step === "review");
+  });
+
+  it("refuses an engine defect cause that hands the escalation to the owner, or has no note", async () => {
+    const world = await buildWorld();
+    await capped(world);
+
+    await expect(
+      world.manager.resolve("cart-total", {
+        escalation: "E1",
+        action: "escalate",
+        cause: "engine_defect",
+        note: DEFECT,
+      }),
+    ).rejects.toThrow(/engine defect/);
+    await expect(
+      world.manager.resolve("cart-total", {
+        escalation: "E1",
+        action: "retry",
+        cause: "engine_defect",
+      }),
+    ).rejects.toThrow(/engine defect/);
+    expect((await world.manager.get("cart-total"))?.escalations[0]).toMatchObject({
+      status: "open",
+    });
+  });
+});

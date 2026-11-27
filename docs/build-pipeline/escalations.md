@@ -21,6 +21,9 @@ The file holds the following fields:
 - `summary` and `details`: what happened, and what the resolver needs, such
   as the last gate report and the attempt and diagnosis files.
 - `status`: `open` or `resolved`, and the `resolution` once it's resolved.
+- `defectNote`: the engine defect note, when the resolution named an
+  engine defect as the cause. For details, see
+  [Engine defects](#engine-defects).
 
 ## What escalates
 
@@ -106,6 +109,9 @@ Replace the following:
   - `escalate`: hands the escalation to the owner, with the reason in
     `--note`.
 
+To name an engine defect as the escalation's cause, add `--engine-defect`.
+For details, see [Engine defects](#engine-defects).
+
 With `retry` or `clarify`, `--own FILES` gives the escalation's task more
 files to change from its next attempt on, separated by commas, such as
 `--own packages/contracts/src/api.ts`. Use it when the task needs a file that
@@ -125,6 +131,46 @@ way. The refusal names the plan field to change, such as
 `placements.developer.vendor`, for a new build. A build start or a plan
 freeze refuses such a plan up front, so only a build that an older engine
 started can reach this.
+
+### Engine defects
+
+Some escalations come from a defect in the engine, not from the task: for
+example, a gate that reads the wrong output, or a build that stalls with
+nothing running. The Project manager doesn't fix the engine in the build's
+session, because engine work fills its context and costs the build's
+tokens. A separate session fixes the engine instead.
+
+To resolve such an escalation, name the cause with `--engine-defect` and
+describe the defect in `--note`, along with the action the build needs once
+the engine is fixed:
+
+```bash
+aio-build resolve SLUG ESCALATION retry --engine-defect --note "DEFECT"
+
+```
+
+Replace `DEFECT` with what is wrong, where, and the evidence.
+
+The engine then does the following:
+
+1. Resolves the escalation and records `cause: engine_defect` in its
+   resolution.
+2. Writes the engine defect note to the
+   `.aio/builds/SLUG/engine-defects/ESCALATION.md` file, with the
+   description, the escalation's summary and details, and what the
+   separate session does. The escalation's `defectNote` field names the
+   file.
+3. Pauses the build, with `pausedBy` set to `engine_defect`, and names the
+   note in the build's `STATUS.md` file.
+
+No agent runs while the build waits. A box start doesn't resume the
+build: only the owner's resume does, once the engine fix is installed. The
+resolution's action then runs, and the build continues as after any other
+resolution. The engine refuses `--engine-defect` without `--note`, and with
+the `escalate` action.
+
+The API takes the cause as `"cause": "engine_defect"` in the resolve
+request.
 
 ### Decisions for the owner
 
