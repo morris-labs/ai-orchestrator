@@ -384,7 +384,7 @@ export class AgentCalls {
       vendor = this.assigned(spec, vendor);
       const limit = this.limitOf(vendor);
       if (!limit) return vendor;
-      const movable = routing.movable(spec);
+      const movable = routing.movable(spec, limit);
       if (movable) {
         const next = this.fallbackVendor(spec.role, spec.avoid);
         if (next) {

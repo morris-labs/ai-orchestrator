@@ -170,8 +170,8 @@ export interface CallRouting {
   readonly fallbackOrder: readonly Vendor[];
   /** True when `vendor` may take a call in `role`. */
   canTake(vendor: Vendor, role: AgentRole): boolean;
-  /** True when a limit may move the call to another vendor. */
-  movable(spec: AgentCallSpec): boolean;
+  /** True when `limit`, the limit the call's vendor reported, may move the call to another vendor. */
+  movable(spec: AgentCallSpec, limit: VendorLimit): boolean;
   /**
    * The vendor a pending call uses after a person's assignment, given the
    * vendor it would use. `limitOf` reports the vendors that hit a limit.
