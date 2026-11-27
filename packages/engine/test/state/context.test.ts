@@ -310,10 +310,13 @@ describe("leases", () => {
     try {
       const { run } = await makeRun({ adapters: { codex: answering("codex") }, broker });
       await run.start();
-      for (let i = 0; i < 100 && broker.pendingIds().length === 0; i++) {
-        await new Promise((r) => setTimeout(r, 10));
-      }
-      expect(broker.pendingIds().length).toBeGreaterThan(0);
+      // The run resolves its base and checks out its range before it asks
+      // for a lease, which takes seconds when the whole workspace suite
+      // shares the machine.
+      await vi.waitFor(() => expect(broker.pendingIds().length).toBeGreaterThan(0), {
+        timeout: 30_000,
+        interval: 10,
+      });
       const state = await run.cancel();
       expect(state.status).toBe("cancelled");
       expect(broker.pendingIds()).toHaveLength(0);
