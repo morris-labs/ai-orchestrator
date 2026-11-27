@@ -14,6 +14,8 @@
 //   calls/KEY.json               each finished agent call, so a resume never repeats one
 //   calls/failed/KEY.AGENT.json  each agent call that failed or was stopped, with its tokens
 //   tasks/TASK/attempt-N.json    each attempt: its start, its agent call, and its gate result
+//   tasks/TASK/pack.md           the task's context pack, which every attempt reuses
+//   tasks/TASK/pack.json         the pack's key and the files it includes (`context-pack.ts`)
 //   escalations/ID.json          each escalation, with its details
 //   messages/ID.json             each team chat message (`team/channel.ts`)
 //   sessions.json                the session registry and its message queue (`sessions/`)
