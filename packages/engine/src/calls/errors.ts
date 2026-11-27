@@ -19,6 +19,18 @@ export class RunCancelled extends Error {
   }
 }
 
+/**
+ * Thrown by a background call that a person's pause reached before its
+ * vendor call. Nothing ran, so the caller can make the call again after
+ * the resume.
+ */
+export class CallHeld extends Error {
+  constructor() {
+    super("A pause holds the call until the resume.");
+    this.name = "CallHeld";
+  }
+}
+
 /** Thrown when an agent call failed twice; the caller stops with a report. */
 export class AgentFailed extends Error {
   constructor(

@@ -18,7 +18,7 @@ import {
   type SessionRecord,
   type Vendor,
 } from "@aio/contracts";
-import { RunCancelled, describeError, type AgentOutcome } from "../../calls/index.js";
+import { CallHeld, RunCancelled, describeError, type AgentOutcome } from "../../calls/index.js";
 import { readJson } from "../../run/files.js";
 import { escalationForCallError } from "../escalations.js";
 import { outsideWritable } from "../gate.js";
@@ -76,6 +76,8 @@ export class SessionDesk {
   private readonly scheduled = new Set<string>();
   /** Work the desk started that `idle()` waits for. */
   private readonly work = new Set<Promise<unknown>>();
+  /** Turns that a person's pause holds back, each until the resume. */
+  private readonly deferred = new Set<Promise<void>>();
 
   constructor(private readonly ctx: BuildContext) {
     this.registry = new SessionRegistryFile(ctx.store.path("sessions.json"));
@@ -177,9 +179,18 @@ export class SessionDesk {
     );
   }
 
-  /** Waits until no message turn is queued or under way. */
+  /**
+   * Waits until no message turn is queued or under way. A turn that a
+   * person's pause holds back waits for the resume, and so does the caller,
+   * at its checkpoint, so a paused build still shows as idle.
+   */
   async idle(): Promise<void> {
-    while (this.work.size > 0) await Promise.allSettled([...this.work]);
+    for (;;) {
+      while (this.work.size > 0) await Promise.allSettled([...this.work]);
+      if (this.deferred.size === 0) return;
+      await this.ctx.calls.checkpoint();
+      await Promise.allSettled([...this.deferred]);
+    }
   }
 
   private track(work: Promise<unknown>): void {
@@ -193,10 +204,25 @@ export class SessionDesk {
     void tracked.finally(() => this.work.delete(tracked));
   }
 
+  /**
+   * Queues the message's turn for its seat. While a person's pause holds
+   * the build, the turn waits for the resume outside the seat's queue and
+   * the worktree, so it starts no vendor call and holds up nothing.
+   */
   private schedule(entry: QueuedMessage): void {
     if (this.scheduled.has(entry.messageId)) return;
     this.scheduled.add(entry.messageId);
-    this.track(this.run(entry.seat, () => this.deliver(entry)));
+    if (!this.ctx.calls.pausing) {
+      this.track(this.run(entry.seat, () => this.deliver(entry)));
+      return;
+    }
+    const resumed = this.ctx.calls.untilResumed().then(() => {
+      this.deferred.delete(resumed);
+      this.scheduled.delete(entry.messageId);
+      // A stopped engine delivers the message, still queued, after a restart.
+      if (!this.ctx.signal.aborted) this.schedule(entry);
+    });
+    this.deferred.add(resumed);
   }
 
   /**
@@ -215,6 +241,11 @@ export class SessionDesk {
       this.scheduled.delete(entry.messageId);
     } catch (error) {
       this.scheduled.delete(entry.messageId);
+      if (error instanceof CallHeld) {
+        // A pause reached the turn before its vendor call: it runs after the resume.
+        this.schedule(entry);
+        return;
+      }
       if (error instanceof RunCancelled) {
         // The message stays queued. A stopped engine delivers it after a
         // restart; a new drive that cut the turn short delivers it now.
@@ -364,6 +395,8 @@ export class SessionDesk {
       placement,
       specialties: packs,
       output: answer.output,
+      // A pause holds the turn before its vendor call, until the resume.
+      background: true,
       ...(reason === null && session.sessionId !== null
         ? {
             sessionId: session.sessionId,

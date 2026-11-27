@@ -4,6 +4,7 @@
 // vendor CLIs.
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { BUILD_PIPELINE } from "../../src/build/index.js";
 import { RunCancelled } from "../../src/calls/errors.js";
 import { BUILD_CLOSING_RECORD, type BuildState } from "@aio/contracts";
 import {
@@ -22,6 +23,33 @@ const SLOW_DEVELOPER: MockResponse = {
   delayMs: 20_000,
   output: REPORT,
   writeFiles: { "src/cart.mjs": CART_DONE },
+};
+
+const POST = "Keep the total in whole dollars; the shop has no cents.";
+
+/** The Test engineer's tests first, which hold the seat's session for task T1. */
+const TESTS_FIRST: MockResponse = {
+  match: "round 1 of",
+  output: {
+    summary: "Wrote the tests first.",
+    tests: [
+      {
+        file: "test/cart.test.mjs",
+        name: "AC1: the cart reports the sum of its item prices",
+        criterion: "AC1",
+        command: "node test/cart.test.mjs",
+      },
+    ],
+  },
+  writeFiles: {
+    "test/cart.test.mjs": [
+      "// AC1: the cart reports the sum of its item prices.",
+      'import assert from "node:assert/strict";',
+      'import { total } from "../src/cart.mjs";',
+      "assert.equal(total([{ price: 2 }, { price: 3 }]), 5);",
+      "",
+    ].join("\n"),
+  },
 };
 
 const DEVELOPER: MockResponse = {
@@ -147,6 +175,61 @@ describe("a paused build", () => {
 
     const paused = await world.manager.pause("cart-total");
     expect(paused).toMatchObject({ status: "paused", idle: true });
+  });
+
+  it("holds a message turn until the resume, then delivers the message once", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [{ match: POST, output: { summary: "Noted." } }, TESTS_FIRST],
+      claude: [{ match: "Task T1", times: 2, error: "crash" }],
+    });
+    await startIn(world, "cart-hold", "box-a");
+    expect((await world.settle("cart-hold")).status).toBe("waiting_escalation");
+    await world.manager.pause("cart-hold");
+    const before = world.calls().length;
+
+    const answer = await world.manager.post("cart-hold", {
+      to: "test-engineer",
+      toTask: "T1",
+      body: POST,
+    });
+    expect(answer.route).toBe("agent");
+    // Give a wrongly started turn the time to reach its vendor.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(world.calls()).toHaveLength(before);
+    expect(await world.manager.get("cart-hold")).toMatchObject({ status: "paused", idle: true });
+
+    await world.manager.resume("cart-hold");
+    await world.waitFor("cart-hold", () => world.calls().length > before);
+    await new Promise((r) => setTimeout(r, 300));
+    const turns = world.calls().filter((c) => c.prompt.includes(POST));
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.cli).toBe("codex");
+    const deliveries = JSON.parse(world.file("cart-hold", "sessions.json")).deliveries;
+    expect(deliveries).toEqual([expect.objectContaining({ status: "delivered" })]);
+  });
+
+  it("holds a message turn after an engine restart until the resume", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [{ match: POST, output: { summary: "Noted." } }, TESTS_FIRST],
+      claude: [{ match: "Task T1", times: 2, error: "crash" }],
+    });
+    await startIn(world, "cart-reload", "box-a");
+    expect((await world.settle("cart-reload")).status).toBe("waiting_escalation");
+    await world.manager.pause("cart-reload");
+    await world.restart();
+    const before = world.calls().length;
+
+    await world.manager.post("cart-reload", { to: "test-engineer", toTask: "T1", body: POST });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(world.calls()).toHaveLength(before);
+    expect(await world.manager.get("cart-reload")).toMatchObject({ status: "paused", idle: true });
+
+    await world.manager.resume("cart-reload");
+    await world.waitFor("cart-reload", () => world.calls().length > before);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(world.calls().filter((c) => c.prompt.includes(POST))).toHaveLength(1);
   });
 });
 
