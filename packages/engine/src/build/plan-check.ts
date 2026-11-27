@@ -1,5 +1,5 @@
 // The checks a build plan must pass before a freeze or a start: the plan
-// keeps to its size's task limit, every task's role has a role file, every
+// keeps to its size's task limit, unless a version before the limit froze it, every task's role has a role file, every
 // specialty a task names exists, and no seat's placement breaks the
 // single-vendor setting.
 import { TASK_LIMITS, taskLimitText, type BuildPlan, type RoleDefinition } from "@aio/contracts";
@@ -14,16 +14,18 @@ import {
  * Throws `EngineError` `validation` when `plan` has more tasks than its
  * size allows, names a role or a specialty that doesn't exist, or places a
  * seat on a vendor that its single-vendor setting excludes: that seat could
- * never be placed.
+ * never be placed. With `taskLimit` `false`, for a plan that a version before
+ * the task limit froze, it skips the task limit.
  */
 export async function checkPlan(
   plan: Pick<BuildPlan, "tasks"> & Partial<Pick<BuildPlan, "size" | "singleVendor" | "placements">>,
   roles: ReadonlyMap<string, RoleDefinition>,
   sources: SpecialtySources,
+  { taskLimit = true }: { taskLimit?: boolean } = {},
 ): Promise<void> {
   const size = plan.size ?? "medium";
   const limit = TASK_LIMITS[size];
-  if (limit !== null && plan.tasks.length > limit) {
+  if (taskLimit && limit !== null && plan.tasks.length > limit) {
     throw new EngineError(
       "validation",
       `The build plan has ${plan.tasks.length} tasks, but ${taskLimitText(size)}. The Contracts step doesn't count as a task. Merge tasks until ${limit} or fewer remain, or change the plan's size.`,

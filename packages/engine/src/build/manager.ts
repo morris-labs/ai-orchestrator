@@ -393,11 +393,16 @@ export class EngineBuildManager implements BuildManager {
     return planner.endMeeting(request);
   }
 
-  /** The plan a build starts from, and the planning record it keeps. */
+  /**
+   * The plan a build starts from, the planning record it keeps, and whether
+   * the task limit applies. The limit skips a plan that a version before it
+   * froze: this version's freeze always records the owner's flow choice in
+   * the plan, so a frozen plan without `flow` is from before the limit.
+   */
   private async startingPlan(
     slug: string,
     given: BuildPlan | undefined,
-  ): Promise<{ plan: BuildPlan; origin?: BuildOrigin }> {
+  ): Promise<{ plan: BuildPlan; taskLimit: boolean; origin?: BuildOrigin }> {
     const planner = await this.planner(slug);
     if (planner?.busy) {
       throw new EngineError(
@@ -419,9 +424,10 @@ export class EngineBuildManager implements BuildManager {
         `Build ${slug} has no frozen plan. Freeze one with aio-build freeze, or start the build with a plan file.`,
       );
     }
-    if (!planner) return { plan };
+    const taskLimit = !latest || latest.plan.flow !== undefined;
+    if (!planner) return { plan, taskLimit };
     const { id, createdAt, boxId } = planner.record;
-    return { plan, origin: { id, createdAt, boxId } };
+    return { plan, taskLimit, origin: { id, createdAt, boxId } };
   }
 
   /** Runs `work` after every earlier box check and the work that followed it. */
@@ -461,12 +467,12 @@ export class EngineBuildManager implements BuildManager {
     }
     const creating = (async () => {
       try {
-        const { plan, origin } = await this.startingPlan(slug, request.plan);
+        const { plan, taskLimit, origin } = await this.startingPlan(slug, request.plan);
         // A start without a box takes the box its planning used, and checks it the same way.
         const boxId = request.boxId ?? origin?.boxId ?? null;
         if (boxId !== null) await this.requireFreeBox(boxId, slug);
         const build = await BuildController.create(
-          { ...request, plan },
+          { ...request, plan, taskLimit },
           this.location,
           this.services,
           this.deps.pipeline,

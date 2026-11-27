@@ -124,10 +124,11 @@ export class BuildController {
    * Creates a build: its directory, plan, state, branch, and worktree.
    * Throws `WorktreeConflict` when the branch or the worktree exists. A
    * build that planning started keeps the id, creation time, and box of
-   * its planning record in `origin`.
+   * its planning record in `origin`. `taskLimit` `false` skips the task
+   * limit, for a plan that a version before the limit froze.
    */
   static async create(
-    request: BuildCreate & { plan: BuildPlan },
+    request: BuildCreate & { plan: BuildPlan; taskLimit?: boolean },
     location: BuildLocation,
     services: Omit<BuildServices, "tierModels" | "sessions">,
     pipeline: BuildPipeline = DEFAULT_PIPELINE,
@@ -142,7 +143,12 @@ export class BuildController {
       branch,
     );
     const roles = await loadRoles(repoPath, location.roles);
-    await checkPlan(request.plan, roles, { repoRoot: repoPath, skillDirs: services.skillDirs() });
+    await checkPlan(
+      request.plan,
+      roles,
+      { repoRoot: repoPath, skillDirs: services.skillDirs() },
+      { taskLimit: request.taskLimit ?? true },
+    );
     const full = await servicesFor(location, services);
     const base = await worktree.resolveBase(request.base);
     await worktree.create(base);
