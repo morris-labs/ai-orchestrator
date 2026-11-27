@@ -12,10 +12,23 @@ import {
   MeetingStatusSchema,
   PlanningScope,
 } from "./build-planning.js";
+import type { BuildSize } from "./builds.js";
 import { IsoDateTimeSchema } from "./common.js";
 
-/** The rounds a meeting runs at most, unless its request says otherwise. */
+/**
+ * The rounds a meeting runs at most in a large build, or when the build has
+ * no size yet, unless its request says otherwise.
+ */
 export const MEETING_ROUND_CAP = 3;
+
+/**
+ * The round cap of a meeting whose request names none, from the build size:
+ * one round for a small or medium build, so that planning doesn't grow the
+ * design, and `MEETING_ROUND_CAP` for a large build or an unknown size.
+ */
+export function meetingRoundCap(size: BuildSize | undefined): number {
+  return size === "small" || size === "medium" ? 1 : MEETING_ROUND_CAP;
+}
 
 /** The most rounds a meeting request can ask for. */
 export const MEETING_ROUND_MAX = 10;
@@ -179,8 +192,8 @@ export const BuildMeetingRequestSchema = z
     members: z.array(RoleNameSchema).min(1).max(8).default(["critic"]),
     /** What the Project manager asks the meeting to settle. */
     brief: z.string().min(1),
-    /** The round cap. */
-    rounds: z.number().int().min(1).max(MEETING_ROUND_MAX).default(MEETING_ROUND_CAP),
+    /** The round cap. Without it, the build size sets the cap (see `meetingRoundCap`). */
+    rounds: z.number().int().min(1).max(MEETING_ROUND_MAX).optional(),
   })
   .strict()
   .superRefine((request, ctx) => {
