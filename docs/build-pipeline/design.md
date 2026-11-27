@@ -679,17 +679,31 @@ spent.
 
 The engine attributes usage to each seat and each milestone loop step, so the
 owner can see which seats earn their cost. The Analyst's size estimate
-includes an expected usage range, and the watcher alerts when a build passes
-twice that estimate.
+includes an expected usage range, and the watcher alerts when a build's
+corrected usage passes twice the high end of that range.
 
-The usage range covers the seats' tokens in, not the Project manager's
-session. The Analyst's rules anchor it on two measured builds: a small bug
-fix with one task used about 2 million tokens in, and a medium feature with
-10 tasks used about 54 million, without the usage that engine defects
-caused. Two builds can't calibrate a model of usage, so the anchors only keep
-the estimate in the right order of magnitude; before them, an Analyst
-estimated 1.5 to 3.5 million for the medium build. Replace the anchors with
-a fit once more builds are measured.
+A build's corrected usage is the tokens in of its agent calls: planning,
+every step, and its review runs. The Claude and Codex adapters record only a
+resumed session's own turns, not the session's running total, so each
+session counts once. Like the estimate, it leaves out tokens out and the
+Project manager's session. In T2, the alert counted tokens in and out with
+resumed sessions' totals, against an estimate that was 17 times too low.
+
+The usage estimate learns from finished builds. When a build finishes, the
+engine adds its corrected usage, size, and task count to a table in
+`.aio/builds/usage-history.json`, one entry per build. The Analyst's prompt
+carries the table: for each size, the number of finished builds, the median
+task count, the lowest, median, and highest tokens in, and the median tokens
+in per task. The Analyst's rules tell it to scale from that row and to widen
+the range when the row has few builds.
+
+A size with no finished build in the project shows a built-in measured
+build instead: a small bug fix with one task used about 2 million tokens in,
+and a medium feature with 10 tasks used about 54 million, without the usage
+that engine defects caused. Before these anchors, an Analyst estimated 1.5
+to 3.5 million for the medium build. A large build has no built-in anchor,
+so the Analyst scales from the medium row. The table reports medians, not a
+fitted model; replace them with a fit once enough builds are measured.
 
 ## App
 

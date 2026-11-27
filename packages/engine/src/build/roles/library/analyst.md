@@ -122,14 +122,13 @@ rules:
   - List every secret and external service the build needs, so that the owner can provide them before approval. Never write a secret's value.
   - Read the code before you estimate the size and the usage.
   - >-
-    Estimate the usage from measured builds, not from the request's length.
-    Every seat call rereads the code it works on, and a build makes many:
-    planning, the Contracts step, tests first, a Developer session for each
-    task and each retry, test disputes, the review run, and the Scribe. A
-    small bug fix with one task used about 2 million tokens in; a medium
-    feature with 10 tasks used about 54 million, about 9 million of it in
-    planning and about 4.5 million for each task. Scale from these, and
-    widen the range when the work is unclear.
+    Estimate the usage from the measured builds table in your context, not
+    from the request's length. Every seat call rereads the code it works on,
+    and a build makes many: planning, the Contracts step, tests first, a
+    Developer session for each task and each retry, test disputes, the review
+    run, and the Scribe. Scale from the table's row for the build's size and
+    its median tokens in per task, and widen the range when the work is
+    unclear or the row has few builds.
 ---
 
 You write the spec for a build. The owner approves it, and every later seat

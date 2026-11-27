@@ -33,6 +33,7 @@ import { BUILD_PIPELINE, STEP_HANDLERS, type StepHandler } from "./steps/index.j
 import { checkPlan } from "./plan-check.js";
 import { resolveEscalation } from "./resolve.js";
 import { BuildStore } from "./store.js";
+import { recordFinishedBuild } from "./usage-history.js";
 import { BuildWorktree } from "./worktree.js";
 
 /** Where a build lives and what it runs on. */
@@ -256,6 +257,7 @@ export class BuildController {
         if (!next) {
           // The last step's note, such as where its digest is, stays.
           await ctx.setStatus("finished", ctx.state.note);
+          await this.recordUsage();
           return;
         }
         await ctx.setStep(next);
@@ -265,6 +267,21 @@ export class BuildController {
     } finally {
       // A pause that came in meanwhile holds once no call runs.
       await ctx.calls.endDrive();
+    }
+  }
+
+  /**
+   * Adds the finished build's corrected usage to the usage estimate table.
+   * A failure only logs: the build stays finished.
+   */
+  private async recordUsage(): Promise<void> {
+    try {
+      await recordFinishedBuild(this.ctx);
+    } catch (error) {
+      this.log.error("Couldn't add a finished build's usage to the usage estimate table", {
+        build: this.slug,
+        error: describeError(error),
+      });
     }
   }
 
