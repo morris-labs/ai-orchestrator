@@ -334,10 +334,12 @@ describe("the reliability gate", () => {
       expect(state.escalations).toEqual([]);
       expect(world.jsonFiles(SLUG, "escalations")).toEqual([]);
       expect(state.pausedBy ?? null).toBeNull();
-      // The Project manager's inbox gets the digests, and nothing that needs an answer.
+      // The Project manager's inbox gets each milestone's digest and hand-off, the
+      // release ready digest, and nothing that needs an answer.
       const inbox = world.events.ofType("build.inbox").map((e) => e.item);
       expect(inbox.map((i) => [i.kind, i.needsAnswer])).toEqual([
         ["digest", false],
+        ["handoff", false],
         ["digest", false],
       ]);
 

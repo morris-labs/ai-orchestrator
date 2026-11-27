@@ -38,6 +38,7 @@ function packOf(prompt: string | undefined): string {
 /** A plan with a milestone, a contract file, and a second task the excerpt leaves out. */
 function packPlan(ownedFiles: string[] = ["src/cart.mjs"]) {
   return cartPlan({
+    size: "medium",
     architecture: "The cart module sums prices; the prices module holds the currency.",
     milestones: [
       { id: "M1", title: "Totals", goal: "The cart shows a total.", tasks: ["T1"] },
@@ -75,6 +76,11 @@ describe("the Developer context pack", () => {
     commitFiles(world, { "src/prices.mjs": PRICES });
     world.script({
       claude: [
+        // A medium build runs the Contracts step; the contract file exists already.
+        {
+          match: "of the Contracts step",
+          output: { summary: "The prices contract exists already.", criteria: [] },
+        },
         { match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } },
         {
           match: "Task T2",

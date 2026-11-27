@@ -11,8 +11,12 @@ import { z } from "zod";
 import { BuildIdSchema, BuildSlugSchema } from "./build-events.js";
 import { IsoDateTimeSchema } from "./common.js";
 
-/** What an inbox item points to: an escalation file, or a digest that code built. */
-export const PmItemKindSchema = z.enum(["escalation", "digest"]);
+/**
+ * What an inbox item points to: an escalation file, a digest that code
+ * built, or a milestone's hand-off file, from which the Project manager
+ * starts a fresh session.
+ */
+export const PmItemKindSchema = z.enum(["escalation", "digest", "handoff"]);
 export type PmItemKind = z.infer<typeof PmItemKindSchema>;
 
 /** The longest summary an item keeps, in characters, so its pointer stays one line. */
@@ -24,7 +28,7 @@ export const PmItemSchema = z.object({
   kind: PmItemKindSchema,
   /**
    * What the item is about: the escalation ID, such as `E2`, or the
-   * digest's name, such as `milestone-M1` or `release-ready`. A build has at
+   * digest's or hand-off's name, such as `milestone-M1` or `release-ready`. A build has at
    * most one item for each kind and ref.
    */
   ref: z.string().min(1),

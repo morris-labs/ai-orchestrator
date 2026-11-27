@@ -283,6 +283,15 @@ function duplicates(ids: readonly string[]): string[] {
   return [...new Set(ids.filter((id) => seen.size === seen.add(id).size))];
 }
 
+/** A planning question that the Project manager answered with the Analyst's recommended answer. */
+export const BuildDefaultedAnswerSchema = z
+  .object({
+    question: z.string().min(1),
+    answer: z.string().min(1),
+  })
+  .strict();
+export type BuildDefaultedAnswer = z.infer<typeof BuildDefaultedAnswerSchema>;
+
 export const BuildPlanSchema = z
   .object({
     /** The plan's version; a revised plan gets the next one. */
@@ -327,6 +336,12 @@ export const BuildPlanSchema = z
      * `QUESTION_CAP`.
      */
     questionsPerTask: z.number().int().min(0).max(100).optional(),
+    /**
+     * The planning questions that the Project manager answered with the
+     * Analyst's recommended answer instead of asking the owner. Absent
+     * means none.
+     */
+    defaultedAnswers: z.array(BuildDefaultedAnswerSchema).optional(),
   })
   .strict()
   .superRefine((plan, ctx) => {

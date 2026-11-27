@@ -36,23 +36,46 @@ The check passes when all three values are set and `aio-build` has a path.
 
 ## 2. Recover the build
 
-Your session outlives many compactions, so the build's state lives in files,
-not in your context. Whenever this skill loads after a compaction, a
-restart, or a gap, and a build is open, reread before you act:
+Your session outlives many compactions, and starts fresh at each milestone,
+so the build's state lives in files, not in your context. Whenever this
+skill loads after a compaction, a restart, a `/clear`, or a gap, and a build
+is open, reread before you act:
 
 1. Find your box's builds:
    `grep -l "$AIO_BOX_ID" "$AIO_PROJECT_ROOT"/.aio/builds/*/state.json "$AIO_PROJECT_ROOT"/.aio/builds/*/planning.json`.
    The folder name is the slug. A build the owner names counts too.
-2. Read `.aio/builds/SLUG/STATUS.md`: status, step, tasks, escalations.
-3. Read the build plan: `plan.json` once the build runs; during planning,
-   the highest `plans/vN.json`, else `planning/draft.json`, plus
-   `planning.json` for the seat calls and meetings so far.
+2. When the build has hand-off files, read the newest one,
+   `.aio/builds/SLUG/handoffs/milestone-ID.md` (`ls -t` lists it first). It
+   holds the plan state, the open escalations, the owner's decisions, the
+   defaulted answers, and the usage to date, so skip step 3.
+3. Without a hand-off file, read `.aio/builds/SLUG/STATUS.md`: status,
+   step, tasks, escalations. Then read the build plan: `plan.json` once the
+   build runs; during planning, the highest `plans/vN.json`, else
+   `planning/draft.json`, plus `planning.json` for the seat calls and
+   meetings so far.
 4. Run `aio-build inbox SLUG` and read the file each item names. Act on
    every item that waits (section 5).
 
 Recovery is done when you can state the build's status, step, and every
 waiting item to the owner. Record the slug in your conversation's
 `STATUS.md` notes, so a fresh session finds it.
+
+## Reading rules
+
+Keep your context small: each turn resends it, and the build can run for
+days. Read the files that code writes for you, and nothing larger:
+
+- Read digests, hand-off files, escalation files, `STATUS.md`, and the
+  build plan.
+- Read an attempt or diagnosis file only when an escalation's `details`
+  lists it and `triage.md` tells you to.
+- Don't read diffs, `git log -p`, the build's worktree, full logs, or
+  seat transcripts. When a digest or an escalation leaves a question open,
+  run `aio-build status SLUG`. Read the team chat with
+  `aio-build messages SLUG` only when the owner asks what the agents said,
+  or when an escalation turns on one message.
+- Don't reread a file you read in this session unless a pointer says it
+  changed.
 
 ## 3. Plan with the owner
 
@@ -130,6 +153,26 @@ and digest:
 Read the file at `PATH`, then triage it with the `triage.md` file beside
 this skill. You don't poll; pointers arrive on their own. A missed pointer
 waits in `aio-build inbox SLUG`.
+
+### The hand-off at each milestone
+
+At each milestone end, the engine writes the milestone's digest and then a
+hand-off file, `handoffs/milestone-ID.md`, and sends a pointer for each.
+The hand-off pointer starts with `Start a fresh Project manager session
+from this hand-off file`. When it arrives:
+
+1. Finish what waits before it: report the milestone's digest to the
+   owner, and triage every escalation the inbox lists.
+2. Tell the owner the milestone is done and what comes next, and ask them
+   to type `/clear` in this session once it's idle. The cleared session
+   loads this skill with the next pointer, and section 2 recovers the build
+   from the newest hand-off file.
+3. Until the session is cleared, work from the hand-off file as if it were
+   fresh: take the plan state, escalations, decisions, and usage from it,
+   not from earlier turns.
+
+The hand-off routine is done when the owner knows the milestone result and
+nothing in `aio-build inbox SLUG` waits for your answer.
 
 Owner requests during execution map to requests:
 
