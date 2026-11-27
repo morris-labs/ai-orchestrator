@@ -141,11 +141,15 @@ the pipeline or a large task through a single session. Record the answer
 in your notes, and pass it to the freeze with `--flow` (section 4). Only
 the owner chooses the flow; never assume it.
 
-The engine doesn't run the single-session flow yet. When the owner chooses
-it, say so, freeze with `--flow single-session` to record the choice, and
-stop: `aio-build start` refuses that plan with a message that the flow
-isn't built yet. To run the build anyway, the owner must choose the
-pipeline, and you freeze again with `--flow pipeline`.
+A single-session build runs preflight, then one Developer session against
+the approved criteria, with the task gate after each task, then one review
+run on the whole diff. The review run's confirmed findings go back to that
+same Developer session, and the build ends release ready. It skips the
+Contracts step, tests first, and the Scribe, so it locks no tests and
+writes no decision records, glossary entries, or changelog entry: the
+release-ready digest lists the criteria and the usage by seat and step
+instead. Escalations, digests, and the build requests work the same way as
+in a pipeline build.
 
 Every secret the plan lists must be ticked in the box's **Secrets
 (project)** section before approval; tell the owner which ones.
