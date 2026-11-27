@@ -189,6 +189,8 @@ export const planningRecord: BuildPlanning = {
   ],
   frozen: [],
   meetings: [],
+  recommendation: null,
+  questions: [],
   createdAt: "2026-11-23T09:00:00.000Z",
   updatedAt: "2026-11-23T09:05:00.000Z",
 };
@@ -210,6 +212,7 @@ export const freezeAnswer: BuildFreezeAnswer = {
         file: "plans/v1.json",
         hash: "a".repeat(64),
         push: true,
+        flow: "pipeline",
         frozenAt: "2026-11-23T09:10:00.000Z",
       },
     ],
@@ -219,6 +222,7 @@ export const freezeAnswer: BuildFreezeAnswer = {
     file: "plans/v1.json",
     hash: "a".repeat(64),
     push: true,
+    flow: "pipeline",
     frozenAt: "2026-11-23T09:10:00.000Z",
   },
   plan: BuildPlanSchema.parse({

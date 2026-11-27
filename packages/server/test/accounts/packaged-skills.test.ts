@@ -115,6 +115,15 @@ describe("the aio-build skill", () => {
     expect(plan.size).toBe("small");
     expect(plan.tasks).toHaveLength(1);
     expect(plan.push).toBeNull();
+    expect(plan.flow).toBeNull();
+    expect(plan.recommendation?.flow).toBe("single_session");
+  });
+
+  it("asks the owner only the questions that change a criterion", () => {
+    const text = fs.readFileSync(path.join(PACKAGED_SKILLS_DIR, "aio-build", "SKILL.md"), "utf8");
+    expect(text).toMatch(/Ask the owner every question whose `changesCriterion` is true/);
+    expect(text).toMatch(/Don't ask the others\. The engine takes their recommended answers/);
+    expect(text).toContain("`defaultedAnswers`");
   });
 
   it("names only requests that the aio-build command has", () => {

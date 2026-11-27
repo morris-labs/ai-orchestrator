@@ -310,10 +310,13 @@ describe("leases", () => {
     try {
       const { run } = await makeRun({ adapters: { codex: answering("codex") }, broker });
       await run.start();
-      for (let i = 0; i < 100 && broker.pendingIds().length === 0; i++) {
-        await new Promise((r) => setTimeout(r, 10));
-      }
-      expect(broker.pendingIds().length).toBeGreaterThan(0);
+      // The run resolves its base and checks out its range before it asks
+      // for a lease, which takes seconds when the whole workspace suite
+      // shares the machine.
+      await vi.waitFor(() => expect(broker.pendingIds().length).toBeGreaterThan(0), {
+        timeout: 30_000,
+        interval: 10,
+      });
       const state = await run.cancel();
       expect(state.status).toBe("cancelled");
       expect(broker.pendingIds()).toHaveLength(0);
@@ -832,5 +835,41 @@ describe("a build's review run under a limit", () => {
 
     expect(events.ofType("agent.started").map((e) => e.vendor)).toEqual(["codex"]);
     expect(ctx.state.pausedUntil).toBe(resetAt);
+  });
+
+  it("moves a call off a quota with no reset time to another vendor", async () => {
+    const { ctx, events } = await makeRun({
+      adapters: { codex: limited("codex"), claude: answering("claude") },
+      request: { build },
+    });
+
+    await ctx.callAgent(review(ctx.state.request.repoPath));
+
+    expect(events.ofType("agent.started").map((e) => e.vendor)).toEqual(["codex", "claude"]);
+    expect(events.ofType("role.reassigned")).toEqual([
+      expect.objectContaining({
+        role: "disprover",
+        from: ["codex"],
+        to: ["claude"],
+        reason: "limit",
+      }),
+    ]);
+  });
+
+  it("asks a person about a quota with no reset time when no other vendor can take the call", async () => {
+    const { ctx, events } = await makeRun({
+      adapters: {
+        codex: limited("codex"),
+        copilot: limited("copilot"),
+        claude: answering("claude"),
+      },
+      request: { build },
+    });
+
+    await expect(
+      ctx.callAgent(review(ctx.state.request.repoPath, { avoid: ["claude"] })),
+    ).rejects.toThrow(DecisionNeeded);
+
+    expect(events.ofType("agent.started").map((e) => e.vendor)).toEqual(["codex", "copilot"]);
   });
 });

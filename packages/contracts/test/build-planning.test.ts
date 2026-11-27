@@ -9,6 +9,7 @@ import {
   BuildSocketPlanSchema,
   BuildSocketStartSchema,
   BuildSpecSchema,
+  SavedBuildSpecSchema,
   draftBuildPlan,
 } from "../src/index.js";
 import { roundTrip } from "./helpers.js";
@@ -27,6 +28,11 @@ export const analystAnswer = {
   usageEstimate: { low: 200_000, high: 600_000 },
   secrets: [{ name: "SHOP_API_TOKEN", purpose: "Reads prices from the shop's API." }],
   services: [{ name: "Shop API", purpose: "The source of item prices." }],
+  recommendation: {
+    flow: "single_session",
+    highRisk: false,
+    reason: "The change stays in the cart module and touches no stored data.",
+  },
 };
 
 /** What an Architect answers: the architecture, milestones, and task graph. */
@@ -61,6 +67,47 @@ describe("the planning seats' answers", () => {
   it("refuses a spec criterion without a verification method", () => {
     const bad = { ...analystAnswer, criteria: [{ id: "AC1", text: "The cart totals." }] };
     expect(() => BuildSpecSchema.parse(bad)).toThrow(/verification/);
+  });
+
+  it("refuses a spec without a recommended flow", () => {
+    const { recommendation: _recommendation, ...bad } = analystAnswer;
+    expect(() => BuildSpecSchema.parse(bad)).toThrow(/recommendation/);
+  });
+
+  it.each([
+    ["small", false, "pipeline"],
+    ["medium", false, "pipeline"],
+    ["medium", true, "single_session"],
+    ["large", false, "single_session"],
+  ])("refuses a %s spec, high risk %s, that recommends %s", (size, highRisk, flow) => {
+    const bad = {
+      ...analystAnswer,
+      size,
+      recommendation: { flow, highRisk, reason: "A reason." },
+    };
+    expect(() => BuildSpecSchema.parse(bad)).toThrow(/recommendation/);
+  });
+
+  it("accepts a high-risk medium spec that recommends the pipeline", () => {
+    const spec = BuildSpecSchema.parse({
+      ...analystAnswer,
+      size: "medium",
+      recommendation: { flow: "pipeline", highRisk: true, reason: "It runs a migration." },
+    });
+    expect(spec.recommendation.flow).toBe("pipeline");
+  });
+
+  it("reads a saved spec from before the recommendation with a null one", () => {
+    const { recommendation: _recommendation, ...old } = analystAnswer;
+    expect(SavedBuildSpecSchema.parse(old).recommendation).toBeNull();
+  });
+
+  it("refuses a saved spec whose recommendation breaks the size threshold", () => {
+    const bad = {
+      ...analystAnswer,
+      recommendation: { flow: "pipeline", highRisk: false, reason: "A reason." },
+    };
+    expect(() => SavedBuildSpecSchema.parse(bad)).toThrow(/recommendation/);
   });
 
   it("refuses a usage estimate whose low end is over its high end", () => {
@@ -119,6 +166,8 @@ describe("the full build plan", () => {
       milestones: architectAnswer.milestones,
       push: null,
       issue: null,
+      recommendation: analystAnswer.recommendation,
+      flow: null,
     });
     expect(plan.criteria.map((c) => c.id)).toEqual(["AC1", "AC2"]);
     expect(plan.tasks[0]?.specialties).toEqual(["node-dev"]);
@@ -210,12 +259,43 @@ describe("the planning record", () => {
           file: "plans/v1.json",
           hash: "a".repeat(64),
           push: true,
+          flow: "single_session",
+          frozenAt: "2026-11-23T09:10:00.000Z",
+        },
+      ],
+      recommendation: analystAnswer.recommendation,
+      createdAt: "2026-11-23T09:00:00.000Z",
+      updatedAt: "2026-11-23T09:10:00.000Z",
+    });
+  });
+});
+
+describe("the flow of an older record", () => {
+  it("reads a frozen version from before the flow choice as a pipeline build", () => {
+    const record = BuildPlanningSchema.parse({
+      version: 1,
+      id: "01JB0000000000000000000000",
+      slug: "cart-total",
+      projectId: "proj-1",
+      boxId: null,
+      container: "aio-agent-proj-1",
+      repoPath: "/work/shop",
+      issue: null,
+      calls: [],
+      frozen: [
+        {
+          version: 1,
+          file: "plans/v1.json",
+          hash: "a".repeat(64),
+          push: false,
           frozenAt: "2026-11-23T09:10:00.000Z",
         },
       ],
       createdAt: "2026-11-23T09:00:00.000Z",
       updatedAt: "2026-11-23T09:10:00.000Z",
     });
+    expect(record.frozen[0]?.flow).toBe("pipeline");
+    expect(record.recommendation).toBeNull();
   });
 });
 
@@ -246,6 +326,14 @@ describe("the planning requests on the build socket", () => {
     expect(
       BuildSocketFreezeSchema.parse({ projectId: "p", boxId: null, slug: "s", push: false }).push,
     ).toBe(false);
+  });
+
+  it("takes the owner's flow choice with a freeze, and refuses an unknown flow", () => {
+    const scope = { projectId: "p", boxId: null, slug: "s" };
+    expect(BuildSocketFreezeSchema.parse({ ...scope, flow: "single_session" }).flow).toBe(
+      "single_session",
+    );
+    expect(() => BuildSocketFreezeSchema.parse({ ...scope, flow: "solo" })).toThrow();
   });
 
   it("starts a build without a plan, from its frozen plan", () => {

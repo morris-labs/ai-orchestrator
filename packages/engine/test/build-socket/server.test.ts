@@ -255,8 +255,9 @@ describe("the build socket", () => {
       ...request,
       proposer: "architect",
       members: ["critic"],
-      rounds: 3,
     });
+    // Without a round cap, the engine takes it from the build size.
+    expect(builds.meet.mock.calls[0]?.[0]).not.toHaveProperty("rounds");
   });
 
   it("relays an owner post to a meeting", async () => {

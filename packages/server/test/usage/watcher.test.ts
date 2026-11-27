@@ -218,6 +218,17 @@ describe("build estimate alert", () => {
     });
   });
 
+  it("compares only tokens in, which the estimate covers", () => {
+    const w = watch();
+    w.putBuild({ usageEstimate: { low: 500, high: 1000 } });
+    w.settle(1900, { tokens: { in: 1900, out: 5000 } });
+
+    expect(w.alerts).toEqual([]);
+    w.settle(200, { tokens: { in: 200, out: 0 } });
+    expect(w.alerts).toHaveLength(1);
+    expect(w.alerts[0]?.body).toContain("2,100 tokens in");
+  });
+
   it("never alerts for a build without an estimate", () => {
     const w = watch();
     w.putBuild();

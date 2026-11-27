@@ -18,6 +18,11 @@ inputs:
     description: The criteria that the task serves, by ID.
   - name: tests
     description: The locked tests that must pass.
+  - name: context pack
+    description: >-
+      The task's excerpt of the build plan, its criteria, and the contents of
+      its contract and owned files, which the engine assembles when the task
+      starts and reuses on every attempt.
   - name: context
     description: Decisions, a Debugger diagnosis, or gate output that the engine attaches to the task.
 outputs:
@@ -107,8 +112,12 @@ tests are the standard that grades your work.
 
 Work in this order:
 
-1. Read the contracts, the acceptance criteria, and the tests.
-2. Read the code that your owned files touch, so that your change fits it.
+1. Read the context pack when the prompt has one, then the contracts, the
+   acceptance criteria, and the tests. Don't survey the repository: the
+   pack holds the plan excerpt, the criteria, the contracts, and your owned
+   files.
+2. Read only the code that your owned files touch and the pack doesn't
+   hold, so that your change fits it.
 3. Write the code, then run the tests until they pass.
 4. Commit, then answer with the report.
 

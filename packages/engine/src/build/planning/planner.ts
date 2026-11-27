@@ -21,13 +21,21 @@ import {
   BUILD_DRAFT_FILE,
   BUILD_PLANNING_FILE,
   BuildDesignSchema,
+  BuildFlowSchema,
   BuildMeetingSchema,
   BuildPlanSchema,
+  BuildSizeSchema,
   BuildPlanningSchema,
   BuildSpecSchema,
+  SavedBuildSpecSchema,
+  type SavedBuildSpec,
   draftBuildPlan,
+  FlowRecommendationSchema,
+  taskLimitText,
   VendorSchema,
+  meetingRoundCap,
   type BuildFreezeAnswer,
+  buildFlowText,
   type BuildFreezeRequest,
   type BuildIssue,
   type BuildMeeting,
@@ -39,6 +47,7 @@ import {
   type BuildPlanning,
   type BuildSeatAnswer,
   type BuildSeatRequest,
+  type FlowRecommendation,
   type FrozenPlan,
   type PlanningCall,
   type RoleDefinition,
@@ -67,16 +76,23 @@ import { seatCallSpec } from "../seat-call.js";
 import { listSpecialties } from "../specialties/index.js";
 import { renderPlanningStatus } from "../status-file.js";
 import { BuildStore } from "../store.js";
+import { usageTableText } from "../usage-history.js";
 import type { TeamChannel } from "../../team/index.js";
 import { Meeting, type MeetingHost } from "./meeting.js";
 
 /** The engine's own draft plan, beside the one the Project manager can edit. */
 export const ENGINE_DRAFT_FILE = "planning/draft.engine.json";
 
-/** The answers the engine reads, by seat: the spec from the Analyst and the design from the Architect. */
-const ANSWERS: Readonly<Record<string, { name: string; schema: z.ZodTypeAny }>> = {
-  analyst: { name: "spec", schema: BuildSpecSchema },
-  architect: { name: "design", schema: BuildDesignSchema },
+/**
+ * The answers the engine reads, by seat: the spec from the Analyst and the
+ * design from the Architect. `schema` checks a new answer, and `saved` reads
+ * an answer saved by this or an earlier engine version.
+ */
+const ANSWERS: Readonly<
+  Record<string, { name: string; schema: z.ZodTypeAny; saved: z.ZodTypeAny }>
+> = {
+  analyst: { name: "spec", schema: BuildSpecSchema, saved: SavedBuildSpecSchema },
+  architect: { name: "design", schema: BuildDesignSchema, saved: BuildDesignSchema },
 };
 
 /** The SHA-256 of a plan without its version: two plans with one hash are the same plan. */
@@ -91,6 +107,19 @@ function askOwner(slug: string): string {
     `The freeze needs the owner's push answer. Ask the owner whether build ${slug} can push ` +
     `its branch build/${slug} and open its pull request, then freeze again with --push yes ` +
     `or --push no.`
+  );
+}
+
+/** The message of a freeze that has no flow choice, with the Analyst's recommendation when there is one. */
+function askOwnerFlow(slug: string, recommendation: FlowRecommendation | null): string {
+  const recommended = recommendation
+    ? ` The Analyst recommends the ${buildFlowText(recommendation.flow)} flow: the task is ` +
+      `${recommendation.highRisk ? "" : "not "}high-risk. ${recommendation.reason}`
+    : "";
+  return (
+    `The freeze needs the owner's flow choice. Ask the owner whether build ${slug} runs ` +
+    `as a pipeline build or as a single session.${recommended} Then freeze again with ` +
+    `--flow pipeline or --flow single-session.`
   );
 }
 
@@ -239,6 +268,8 @@ export class BuildPlanner {
       calls: [],
       frozen: [],
       meetings: [],
+      recommendation: null,
+      questions: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -481,7 +512,12 @@ export class BuildPlanner {
             (await new Git(this.services.runner, this.planning.repoPath).currentBranch()) ?? "HEAD",
           ownedFiles: [],
           criteria: (await this.latest("analyst"))?.criteria ?? [],
-          context: [await this.context(input.omit), ...input.context].join("\n\n"),
+          context: [
+            await this.context(input.omit),
+            // The Analyst's usage estimate scales from the measured builds.
+            ...(seat === "analyst" ? [await usageTableText(this.location.projectRoot)] : []),
+            ...input.context,
+          ].join("\n\n"),
         },
         repoPath: this.planning.repoPath,
         scratchDir: this.store.scratchDir,
@@ -516,6 +552,11 @@ export class BuildPlanner {
           parsed.error.issues,
         );
       }
+      if (seat === "analyst" && parsed?.success) {
+        const spec = parsed.data as z.infer<typeof BuildSpecSchema>;
+        this.planning.recommendation = spec.recommendation;
+        this.planning.questions = spec.questions;
+      }
       call.status = "done";
       call.finishedAt = this.now();
       file.finishedAt = call.finishedAt;
@@ -545,7 +586,7 @@ export class BuildPlanner {
       proposer: request.proposer,
       members: request.members,
       brief: request.brief,
-      roundCap: request.rounds,
+      roundCap: request.rounds ?? meetingRoundCap((await this.latest("analyst"))?.size),
       status: "running",
       rounds: [],
       posts: [],
@@ -669,14 +710,14 @@ export class BuildPlanner {
   }
 
   /** The latest valid answer of `seat`, parsed with its schema, or `undefined`. */
-  private async latest(seat: "analyst"): Promise<z.infer<typeof BuildSpecSchema> | undefined>;
+  private async latest(seat: "analyst"): Promise<SavedBuildSpec | undefined>;
   private async latest(seat: "architect"): Promise<z.infer<typeof BuildDesignSchema> | undefined>;
   private async latest(seat: "analyst" | "architect"): Promise<unknown> {
     const latest = await this.latestAnswer(seat);
-    return latest && ANSWERS[seat]?.schema.parse(latest.answer);
+    return latest && ANSWERS[seat]?.saved.parse(latest.answer);
   }
 
-  /** The latest answer of `seat` that keeps its schema, when it has one, with its file. */
+  /** The latest answer of `seat` that keeps its saved-answer schema, when it has one, with its file. */
   private async latestAnswer(
     seat: string,
   ): Promise<{ file: string; answer: Record<string, unknown> } | undefined> {
@@ -685,7 +726,7 @@ export class BuildPlanner {
       const file = await this.store.readJson<CallFile>(this.store.path(call.file));
       if (!file?.answer) continue;
       const expected = ANSWERS[seat];
-      if (expected && !expected.schema.safeParse(file.answer).success) continue;
+      if (expected && !expected.saved.safeParse(file.answer).success) continue;
       return { file: call.file, answer: file.answer };
     }
     return undefined;
@@ -716,6 +757,7 @@ export class BuildPlanner {
         skillDirs: this.services.skillDirs(),
       })
     ).map((s) => `\`${s.name}\``);
+    parts.push(taskLimitContext());
     parts.push(
       names.length > 0
         ? `A task can name these specialties, and no others: ${names.join(", ")}. Name the ones whose guidance the task's agents need.`
@@ -787,9 +829,19 @@ export class BuildPlanner {
     }
     const push = request.push ?? (typeof raw.push === "boolean" ? raw.push : null);
     if (push === null) throw new EngineError("validation", askOwner(slug));
+    const rawFlow = BuildFlowSchema.safeParse(raw.flow);
+    const flow = request.flow ?? (rawFlow.success ? rawFlow.data : null);
+    if (flow === null) {
+      const recommendation =
+        FlowRecommendationSchema.nullable()
+          .catch(null)
+          .parse(raw.recommendation ?? null) ?? this.planning.recommendation;
+      throw new EngineError("validation", askOwnerFlow(slug, recommendation));
+    }
     const parsed = BuildPlanSchema.safeParse({
       ...raw,
       push,
+      flow,
       issue: raw.issue ?? this.planning.issue,
     });
     if (!parsed.success) {
@@ -816,6 +868,7 @@ export class BuildPlanner {
       file: `plans/v${version}.json`,
       hash,
       push,
+      flow,
       frozenAt: this.now(),
     };
     const path = this.store.path(frozen.file);
@@ -859,4 +912,15 @@ export class BuildPlanner {
     this.meetingChannel?.close();
     await this.writeChain;
   }
+}
+
+/**
+ * The task limit by build size, as every planning seat hears it, so that the
+ * Analyst sizes the build and the Architect plans its tasks within it.
+ */
+function taskLimitContext(): string {
+  const limits = BuildSizeSchema.options.map(
+    (size) => taskLimitText(size) ?? `a ${size} build has no task limit`,
+  );
+  return `The plan check refuses a plan with more tasks than its size allows: ${limits.join(", ")}. The Contracts step doesn't count as a task. Plan fewer, larger tasks: each task costs a cold Developer start.`;
 }

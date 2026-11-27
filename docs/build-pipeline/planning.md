@@ -33,7 +33,12 @@ The seats answer as follows:
 
 - The Analyst writes the spec: stories, edge cases, numbered acceptance
   criteria with a verification method for each, a size, a usage estimate,
-  and the secrets and services the build needs.
+  the secrets and services the build needs, a recommended flow, and the
+  open questions. Each question has a recommended answer and a flag for
+  whether another answer would change a criterion. The draft plan's
+  `defaultedAnswers` list takes the recommended answer for each question
+  that changes no criterion, and the Project manager asks the owner only
+  the rest.
 - The Architect writes the design: the architecture, the shared files, the
   milestones, and the task graph. Each task names its specialties, from
   the list of specialties that the engine gives the Architect, and lists
@@ -68,7 +73,9 @@ Replace the following:
   `critic`.
 - `SEAT`: the seat whose latest answer the meeting discusses. The default
   is `architect`.
-- `N`: the round cap, from 1 to 10. The default is 3.
+- `N`: the round cap, from 1 to 10. The default comes from the size in
+  the Analyst's spec: 1 for a small or medium build and 3 for a large build
+  or a build with no spec yet.
 
 Code takes the turns:
 
@@ -122,10 +129,11 @@ start.
 ## Freeze the build plan
 
 When the owner approves the plan, ask the owner whether the build can push
-its branch and open its pull request, and then run the following command:
+its branch and open its pull request, and which flow the build runs, and
+then run the following command:
 
 ```bash
-aio-build freeze SLUG [PLAN_FILE] --push ANSWER
+aio-build freeze SLUG [PLAN_FILE] --push ANSWER --flow FLOW
 
 ```
 
@@ -133,8 +141,14 @@ Replace the following:
 
 - `PLAN_FILE`: the plan to freeze. Leave it out to freeze the draft.
 - `ANSWER`: `yes` when the owner allows the push, or `no`.
+- `FLOW`: `pipeline` for a build through the full build team, or
+  `single-session` for one Developer session and one review run. The
+  Analyst's spec recommends one, and the owner can choose either. For more
+  information, see [Flow](design.md#flow).
 
-The engine refuses a freeze without the push answer. It writes each plan
+The engine refuses a freeze without the push answer or the flow choice, and
+names the Analyst's recommendation in the refusal. The frozen version, the
+build plan's `flow` field, and the `STATUS.md` file record the choice. It writes each plan
 that changed since the last freeze as the next version, in
 `.aio/builds/SLUG/plans/vN.json`, and never changes a frozen version. To
 change a frozen plan, freeze the changed plan; it becomes the next version.

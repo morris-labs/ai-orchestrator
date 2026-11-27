@@ -20,6 +20,7 @@ import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
+import { taskPack } from "../context-pack.js";
 import { finishedWork } from "../finished-work.js";
 import { otherTasks } from "../other-tasks.js";
 import { SeatCallSkipped, type BuildContext } from "../context.js";
@@ -97,12 +98,25 @@ function clarifications(ctx: BuildContext, taskId: string): string[] {
   );
 }
 
-function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask {
+/** True when the build runs the single-session flow: one Developer session for every task. */
+function singleSession(ctx: BuildContext): boolean {
+  return ctx.plan.flow === "single_session";
+}
+
+/** What the Developer must know in the single-session flow, where no tests come first. */
+const SINGLE_SESSION_NOTE =
+  "This build runs the single-session flow: no Test engineer wrote tests first, and no test is locked. Write the tests that show each acceptance criterion holds, in your owned files, with the code. One review run follows your work, and its confirmed findings come back to this session.";
+
+function roleTask(ctx: BuildContext, task: BuildTask, context: string, pack?: string): RoleTask {
   const criteria = new Map(ctx.plan.criteria.map((c) => [c.id, c.text]));
+  const notes = [
+    setupNote(ctx.plan.commands),
+    ...(singleSession(ctx) ? [SINGLE_SESSION_NOTE] : []),
+  ];
   return {
     id: task.id,
     title: task.title,
-    description: `${task.description}\n\n${setupNote(ctx.plan.commands)}`,
+    description: [task.description, ...notes].join("\n\n"),
     repoPath: ctx.worktree.path,
     branch: ctx.state.branch,
     ownedFiles: task.ownedFiles,
@@ -114,6 +128,7 @@ function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask
       title: ctx.plan.tasks.find((t) => t.id === id)?.title ?? "",
     })),
     context,
+    ...(pack ? { pack } : {}),
   };
 }
 
@@ -266,6 +281,8 @@ async function attempt(
       : undefined;
   const diagnosis = n > 1 ? await readDiagnosis(ctx, task.id, n - 1) : undefined;
   const specialties = await ctx.specialties(task.specialties);
+  // Every attempt reuses the pack that the first one built.
+  const pack = await taskPack(ctx, task);
   let outcome: Awaited<ReturnType<BuildContext["callSeat"]>>;
   try {
     outcome = await ctx.callSeat({
@@ -275,6 +292,8 @@ async function attempt(
       specialties,
       key: record.callKey,
       step: "tasks",
+      // The single-session flow keeps one session for every task and attempt.
+      ...(singleSession(ctx) ? { resume: true, taskIds: ctx.plan.tasks.map((t) => t.id) } : {}),
       task: roleTask(
         ctx,
         task,
@@ -286,6 +305,7 @@ async function attempt(
           clarifications(ctx, task.id),
           await settledDispute(ctx, task, record.after),
         ),
+        pack,
       ),
     });
   } catch (error) {

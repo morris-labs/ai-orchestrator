@@ -176,7 +176,57 @@ describe("aio-build", () => {
       action: "retry",
       own: ["src/api.ts", "test/routes.test.ts"],
     });
+    expect(
+      await resolve(["retry", "--engine-defect", "--note", "The gate reads the wrong file."]),
+    ).toMatchObject({
+      action: "retry",
+      cause: "engine_defect",
+      note: "The gate reads the wrong file.",
+    });
     expect(builds.resolve.mock.calls[0]?.[0]).toBe("cart-total");
+  });
+
+  it("prints an engine defect pause and its note", async () => {
+    const { builds, run } = await world();
+    builds.resolve.mockResolvedValueOnce({
+      ...buildState,
+      status: "paused",
+      pausedBy: "engine_defect",
+      escalations: [
+        {
+          id: "E1",
+          kind: "attempt_cap",
+          level: "project_manager",
+          taskId: "T1",
+          tasks: ["T1"],
+          summary: "Task T1 failed the task gate on all 4 attempts.",
+          file: "escalations/E1.json",
+          status: "resolved",
+          defectNote: "engine-defects/E1.md",
+          resolution: {
+            action: "retry",
+            by: "project_manager",
+            note: "The gate reads the wrong file.",
+            cause: "engine_defect",
+            changes: [],
+            resolvedAt: "2026-01-01T00:00:00.000Z",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const out = await run([
+      "resolve",
+      "cart-total",
+      "E1",
+      "retry",
+      "--engine-defect",
+      "--note",
+      "x",
+    ]);
+
+    expect(out.stdout).toContain("Paused by: an engine defect, see engine-defects/E1.md");
   });
 
   it("prints each escalation's status and the tasks it pauses", async () => {
@@ -378,6 +428,33 @@ describe("aio-build", () => {
     expect(out.stdout).toContain("Push: allowed");
   });
 
+  it("freezes with the owner's flow choice and prints it", async () => {
+    const { builds, run } = await world();
+    builds.freeze.mockResolvedValueOnce({
+      ...freezeAnswer,
+      frozen: { ...freezeAnswer.frozen, flow: "single_session" },
+    });
+    const out = await run(["freeze", "cart-total", "--push", "no", "--flow", "single-session"]);
+    expect(out.code).toBe(0);
+    expect(builds.freeze.mock.calls[0]![0]).toMatchObject({ push: false, flow: "single_session" });
+    expect(out.stdout).toContain("Flow: single session");
+    await run(["freeze", "cart-total", "--push", "no", "--flow", "pipeline"]);
+    expect(builds.freeze.mock.calls[1]![0]).toMatchObject({ flow: "pipeline" });
+  });
+
+  it("prints the Analyst's recommendation and each frozen version's flow in a planning status", async () => {
+    const { builds, run } = await world();
+    builds.get.mockResolvedValueOnce(null);
+    builds.planning.mockResolvedValueOnce({
+      ...freezeAnswer.planning,
+      recommendation: { flow: "pipeline", highRisk: true, reason: "It runs a migration." },
+    });
+    const out = await run(["status", "cart-total"]);
+    expect(out.code).toBe(0);
+    expect(out.stdout).toContain("Recommended flow: pipeline (high-risk). It runs a migration.");
+    expect(out.stdout).toContain("Frozen plan: version 1, flow pipeline");
+  });
+
   it("freezes a plan file and prints the answer as JSON with --json", async () => {
     const { builds, planFile, run } = await world();
     const out = await run(["freeze", "cart-total", planFile, "--push", "no", "--json"]);
@@ -465,6 +542,8 @@ describe("aio-build", () => {
     [["plan", "cart-total", "Analyst", "brief.md"]],
     [["plan", "cart-total", "analyst", "brief.md", "--issue", "shop#1"]],
     [["freeze", "cart-total", "--push", "maybe"]],
+    [["freeze", "cart-total", "--flow", "solo"]],
+    [["start", "cart-total", "--flow", "pipeline"]],
     [["meet", "cart-total", "brief.md", "--rounds", "0"]],
     [["meet", "cart-total", "brief.md", "--members", "Critic"]],
     [["meeting-post", "cart-total", "meeting-x", "post.md"]],

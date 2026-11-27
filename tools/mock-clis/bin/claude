@@ -153,7 +153,31 @@ const response = picked?.response ?? {
   error: "crash",
   errorMessage: "mock claude: the scenario has no response for this prompt",
 };
-if (response.delayMs) await sleep(response.delayMs);
+const tokens = response.tokens ?? { input: 1500, output: 90 };
+const usageBlock = {
+  input_tokens: tokens.input,
+  output_tokens: tokens.output,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+};
+if (response.delayMs) {
+  // The real CLI streams each model response, with its usage, during the
+  // turn, so a call stopped during `delayMs` has already reported its tokens.
+  if (!response.error) {
+    emit({
+      type: "assistant",
+      message: {
+        id: `msg_mock_${newId()}`,
+        model,
+        role: "assistant",
+        content: [{ type: "text", text: "Working on it." }],
+        usage: usageBlock,
+      },
+      session_id: sessionId,
+    });
+  }
+  await sleep(response.delayMs);
+}
 if (response.stderr) process.stderr.write(response.stderr);
 
 const now = Math.floor(Date.now() / 1000);
@@ -180,14 +204,7 @@ const rateLimitEvent = {
   session_id: sessionId,
 };
 
-const tokens = response.tokens ?? { input: 1500, output: 90 };
 const cost = response.costUsd ?? 0.0123;
-const usageBlock = {
-  input_tokens: tokens.input,
-  output_tokens: tokens.output,
-  cache_read_input_tokens: 0,
-  cache_creation_input_tokens: 0,
-};
 // Like the real CLI, `modelUsage` covers the whole session, earlier turns
 // of a resumed session included, while `usage` covers this turn only.
 const sessionTotal = response.error

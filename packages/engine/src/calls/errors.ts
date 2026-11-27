@@ -13,9 +13,24 @@ export class DecisionNeeded extends Error {
 
 /** Thrown when the caller is cancelled, or its driver stopped. */
 export class RunCancelled extends Error {
+  /** The tokens a stopped call spent before it stopped, when its adapter could tell. */
+  tokens: unknown = undefined;
+
   constructor() {
     super("The run was cancelled.");
     this.name = "RunCancelled";
+  }
+}
+
+/**
+ * Thrown by a background call that a person's pause reached before its
+ * vendor call. Nothing ran, so the caller can make the call again after
+ * the resume.
+ */
+export class CallHeld extends Error {
+  constructor() {
+    super("A pause holds the call until the resume.");
+    this.name = "CallHeld";
   }
 }
 

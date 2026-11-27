@@ -370,3 +370,17 @@ describe("specialties", () => {
     expect(world.git(world.root, "branch", "--list", "build/*")).toBe("");
   });
 });
+
+describe("the build world", () => {
+  it("settles a waiting build after a restart that sends no event for it", async () => {
+    const world = await buildWorld();
+    world.script({ claude: [{ match: "Task T1", error: "crash" }] });
+    await world.start("cart-total");
+    expect((await world.settle("cart-total")).status).toBe("waiting_escalation");
+
+    await world.restart();
+
+    expect(world.events.ofType("build.changed")).toEqual([]);
+    expect((await world.settle("cart-total")).status).toBe("waiting_escalation");
+  });
+});

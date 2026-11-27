@@ -21,6 +21,9 @@ The file holds the following fields:
 - `summary` and `details`: what happened, and what the resolver needs, such
   as the last gate report and the attempt and diagnosis files.
 - `status`: `open` or `resolved`, and the `resolution` once it's resolved.
+- `defectNote`: the engine defect note, when the resolution named an
+  engine defect as the cause. For details, see
+  [Engine defects](#engine-defects).
 
 ## What escalates
 
@@ -41,6 +44,16 @@ The file holds the following fields:
 | `question_cap` | An agent asks more questions about a task than the plan's question cap allows. The question goes to the Project manager, and the details hold it. See [Questions](team-chat.md#questions). | Project manager |
 | `test_dispute` | A second test dispute about one test, or a third in one task, which the Project manager rules on; or a Test engineer's fix that changes what a criterion means, which the owner decides. For details, see [Test disputes](test-disputes.md). | Project manager; owner for a criterion change |
 | `set_aside` | A paused task's saved work no longer applies on top of the tasks that ran since. The patch stays in the task's directory. | Project manager |
+
+A single-session build runs no Contracts step, no tests first, and no
+criteria trace, so it raises no `contracts` or `tests_first` escalation and
+no `release_ready` escalation for a criterion without a passing locked test.
+
+A build's review run moves a role off a vendor whose quota has no reset
+time, without an escalation. When no other vendor can take the role, the
+run stops at a `ceiling` decision, which becomes a `review` escalation. For
+details, see the "Limits and usage" section of
+[Build pipeline design](design.md#limits-and-usage).
 
 A Developer never works around a missing secret or service, for example
 with a mock that ships. It stops and reports the gap in the `blocked` field
@@ -106,6 +119,9 @@ Replace the following:
   - `escalate`: hands the escalation to the owner, with the reason in
     `--note`.
 
+To name an engine defect as the escalation's cause, add `--engine-defect`.
+For details, see [Engine defects](#engine-defects).
+
 With `retry` or `clarify`, `--own FILES` gives the escalation's task more
 files to change from its next attempt on, separated by commas, such as
 `--own packages/contracts/src/api.ts`. Use it when the task needs a file that
@@ -125,6 +141,46 @@ way. The refusal names the plan field to change, such as
 `placements.developer.vendor`, for a new build. A build start or a plan
 freeze refuses such a plan up front, so only a build that an older engine
 started can reach this.
+
+### Engine defects
+
+Some escalations come from a defect in the engine, not from the task: for
+example, a gate that reads the wrong output, or a build that stalls with
+nothing running. The Project manager doesn't fix the engine in the build's
+session, because engine work fills its context and costs the build's
+tokens. A separate session fixes the engine instead.
+
+To resolve such an escalation, name the cause with `--engine-defect` and
+describe the defect in `--note`, along with the action the build needs once
+the engine is fixed:
+
+```bash
+aio-build resolve SLUG ESCALATION retry --engine-defect --note "DEFECT"
+
+```
+
+Replace `DEFECT` with what is wrong, where, and the evidence.
+
+The engine then does the following:
+
+1. Resolves the escalation and records `cause: engine_defect` in its
+   resolution.
+2. Writes the engine defect note to the
+   `.aio/builds/SLUG/engine-defects/ESCALATION.md` file, with the
+   description, the escalation's summary and details, and what the
+   separate session does. The escalation's `defectNote` field names the
+   file.
+3. Pauses the build, with `pausedBy` set to `engine_defect`, and names the
+   note in the build's `STATUS.md` file.
+
+No agent runs while the build waits. A box start doesn't resume the
+build: only the owner's resume does, once the engine fix is installed. The
+resolution's action then runs, and the build continues as after any other
+resolution. The engine refuses `--engine-defect` without `--note`, and with
+the `escalate` action.
+
+The API takes the cause as `"cause": "engine_defect"` in the resolve
+request.
 
 ### Decisions for the owner
 

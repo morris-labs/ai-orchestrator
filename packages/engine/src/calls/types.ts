@@ -63,6 +63,13 @@ export interface AgentCallSpec {
   /** Keep this vendor even when a person assigned the role to another one. */
   pinVendor?: boolean;
   /**
+   * True for a call that no driver waits on, such as a build's message
+   * turn. Instead of waiting at a person's pause, it throws `CallHeld`
+   * before its vendor call, so it holds no seat or worktree while the
+   * caller shows as held, and the caller makes it again after the resume.
+   */
+  background?: boolean;
+  /**
    * The build seat's placement the call runs on. The core copies it onto the
    * call's agent and lease events; `placeCall()` in `build/placements` sets
    * the vendor, tier, and effort to match.
@@ -79,8 +86,11 @@ export interface AgentCallSpec {
   specialties?: readonly SpecialtyName[];
 }
 
-/** The seat, the step, the specialties, and the placement of one call, for its lease and its events. */
-export type CallWork = Pick<AgentCallSpec, "seat" | "step" | "specialties" | "placement">;
+/** The seat, the step, the specialties, and the placement of one call, for its lease and its events, and whether it runs in the background. */
+export type CallWork = Pick<
+  AgentCallSpec,
+  "seat" | "step" | "specialties" | "placement" | "background"
+>;
 
 /**
  * Who a call belongs to: a review run (`runId`), a build (`buildId` with
@@ -128,10 +138,32 @@ export function newCallLedger(): CallLedger {
   return { counters: { lease: 0, agent: 0 }, limitedVendors: {} };
 }
 
+/**
+ * The record of one call that failed, ran out of time, hit a limit, or was
+ * stopped: what it spent, and where, so the usage by seat and step counts it.
+ */
+export interface FailedCallRecord {
+  key: string;
+  agentId: string;
+  vendor: Vendor;
+  model: string;
+  seat?: string;
+  step?: string;
+  outcome: "error" | "timeout" | "limited" | "cancelled";
+  error: string;
+  tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
+  elapsedMs: number;
+}
+
 /** Finished calls by key, so a resumed caller doesn't repeat one. */
 export interface CallCache {
   read<T>(key: string): Promise<AgentOutcome<T> | null>;
   write<T>(key: string, outcome: AgentOutcome<T>): Promise<void>;
+  /**
+   * Keeps the record of a call that didn't finish. A resume never reads it,
+   * so the call runs again. Optional: a caller without one keeps no record.
+   */
+  failed?(record: FailedCallRecord): Promise<void>;
 }
 
 /** How the caller shows a wait for a limit, a ceiling, or a person's pause. */
@@ -160,8 +192,8 @@ export interface CallRouting {
   readonly fallbackOrder: readonly Vendor[];
   /** True when `vendor` may take a call in `role`. */
   canTake(vendor: Vendor, role: AgentRole): boolean;
-  /** True when a limit may move the call to another vendor. */
-  movable(spec: AgentCallSpec): boolean;
+  /** True when `limit`, the limit the call's vendor reported, may move the call to another vendor. */
+  movable(spec: AgentCallSpec, limit: VendorLimit): boolean;
   /**
    * The vendor a pending call uses after a person's assignment, given the
    * vendor it would use. `limitOf` reports the vendors that hit a limit.

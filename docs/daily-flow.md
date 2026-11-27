@@ -74,6 +74,11 @@ To give a role to other vendors than the profile does, change it in the
 From a terminal, run `aio review start`. To choose a role there, add
 `--role ROLE=VENDOR[,VENDOR]`.
 
+The agent in the box can start the run itself: in the box's session, it runs
+`aio-box-review start`, which reviews the box's own branch, waits until the
+run ends, and prints the confirmed findings, so the agent can fix them
+without you. See [Start a review run from a box](secrets.md#start-a-review-run-from-a-box).
+
 ## Watch or leave
 
 The dashboard in **AI Orchestrator Review** shows the run live: the stage, the

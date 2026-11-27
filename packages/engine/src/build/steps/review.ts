@@ -1,6 +1,7 @@
 // The review step: one review pipeline run on the build diff, in the build
 // worktree. The Developer seat fills the fixer role, as a fresh agent with
-// the task context in its prompt. A clean run moves the build on; anything
+// the task context in its prompt; in the single-session flow, the fixer
+// resumes the Developer's session instead. A clean run moves the build on; anything
 // else becomes an escalation that names the run.
 //
 // The run's id is saved in `review/run.json` before the run starts, so a
@@ -16,6 +17,7 @@ import {
   type EscalationResolve,
   type RunState,
   type RunStatus,
+  type SeatPlacement,
   type StopReason,
 } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
@@ -93,9 +95,33 @@ function excusedTests(baseline: TestBaseline, protect: readonly string[]): Basel
   return [...byCommand.values()];
 }
 
+/**
+ * The Developer session that the review run's fixer resumes in the
+ * single-session flow, so the confirmed findings go back to the session
+ * that wrote the code. `undefined` for a pipeline build, or when no session
+ * on the fixer's placement holds the seat.
+ */
+async function fixerSession(
+  ctx: BuildContext,
+  placement: SeatPlacement,
+): Promise<{ id: string; folder?: string | null } | undefined> {
+  const taskId = ctx.plan.tasks[0]?.id;
+  if (ctx.plan.flow !== "single_session" || taskId === undefined) return undefined;
+  const session = await ctx.sessions.resumable(REVIEW_FIXER_SEAT, taskId, {
+    ...placement,
+    fresh: false,
+  });
+  if (!session?.sessionId) return undefined;
+  return {
+    id: session.sessionId,
+    ...(session.accountFolder !== undefined ? { folder: session.accountFolder } : {}),
+  };
+}
+
 /** Starts the build's review run with the run id `runId`. */
 async function startRun(ctx: BuildContext, runs: ReviewRuns, runId: string): Promise<void> {
   const placement = ctx.seats.place(REVIEW_FIXER_SEAT);
+  const session = await fixerSession(ctx, placement);
   await runs.start(
     EngineRunCreateSchema.parse({
       runId,
@@ -106,7 +132,11 @@ async function startRun(ctx: BuildContext, runs: ReviewRuns, runId: string): Pro
       roles: { fixer: placement.vendor },
       build: {
         buildId: ctx.state.id,
-        fixer: { placement: { ...placement, fresh: true }, context: reviewTaskContext(ctx) },
+        fixer: {
+          placement: { ...placement, fresh: session === undefined },
+          context: reviewTaskContext(ctx),
+          ...(session ? { session } : {}),
+        },
         gate: {
           tests: ctx.plan.commands.test,
           typecheck: ctx.plan.commands.typecheck,

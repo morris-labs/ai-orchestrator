@@ -34,6 +34,7 @@ import {
   type CallCache,
   type CallDeps,
   type CallLedger,
+  type FailedCallRecord,
 } from "../calls/index.js";
 import type { AdapterOutput, Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
 import type { FindingFilter, Logger, PushOptions } from "../api/core-interface.js";
@@ -127,6 +128,12 @@ export interface SeatCall {
    */
   proceed?: () => boolean;
   /**
+   * True to resume the seat's current session for the task instead of
+   * starting a new agent, as the single-session flow does. A seat without a
+   * session on the same placement starts a new agent all the same.
+   */
+  resume?: boolean;
+  /**
    * Runs once the seat and the worktree are the drive's, right before the
    * call, such as to record the branch head that the agent's changes count
    * from: message turns can commit while the call waits for the seat.
@@ -158,9 +165,17 @@ export interface TurnCall {
   sessionId?: string;
   /** The account folder that holds `sessionId`, as the session registry saved it. */
   sessionFolder?: string | null;
+  /**
+   * True for a message turn, which no drive waits on: a person's pause
+   * holds it before its vendor call, and the build still shows as idle.
+   */
+  background?: boolean;
 }
 
-/** The build's call cache: each finished call in `calls/KEY.json`. */
+/**
+ * The build's call cache: each finished call in `calls/KEY.json`, and each
+ * call that didn't finish in `calls/failed/`.
+ */
 export class FileCallCache implements CallCache {
   constructor(private readonly store: BuildStore) {}
 
@@ -170,6 +185,10 @@ export class FileCallCache implements CallCache {
 
   write<T>(key: string, outcome: AgentOutcome<T>): Promise<void> {
     return this.store.writeJson(this.store.callPath(key), outcome);
+  }
+
+  failed(record: FailedCallRecord): Promise<void> {
+    return this.store.writeJson(this.store.failedCallPath(record.key, record.agentId), record);
   }
 }
 
@@ -685,6 +704,9 @@ export class BuildContext {
           ...(decisions !== "" ? { decisions } : {}),
           ...(this.team ? { teamChat: true } : {}),
         };
+        const session = input.resume
+          ? await this.sessions.resumable(input.seat, input.task.id, placement)
+          : undefined;
         const outcome = await this.runTurn(
           seatCallSpec(role, placement, {
             seat: input.seat,
@@ -694,10 +716,22 @@ export class BuildContext {
             repoPath: this.worktree.path,
             scratchDir: this.store.scratchDir,
             specialties: packs,
+            ...(session?.sessionId
+              ? {
+                  sessionId: session.sessionId,
+                  ...(session.accountFolder !== undefined
+                    ? { sessionFolder: session.accountFolder }
+                    : {}),
+                }
+              : {}),
           }),
           input.seat,
           input.task.id,
         );
+        if (session) {
+          await this.sessions.continued(session, input.key, outcome);
+          return outcome;
+        }
         await this.sessions.started({
           seat: input.seat,
           taskIds,
@@ -734,6 +768,7 @@ export class BuildContext {
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       ...(input.sessionFolder !== undefined ? { sessionFolder: input.sessionFolder } : {}),
     });
+    if (input.background) spec.background = true;
     return this.runTurn(spec, input.seat, input.taskId);
   }
 

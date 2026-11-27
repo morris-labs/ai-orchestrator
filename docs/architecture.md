@@ -316,6 +316,11 @@ The image, `aio-agent` by default, is built on the host from
   the engine package. It sends `AIO_PROJECT_ID`, which the server sets on
   every container, and `AIO_BOX_ID`, which the server sets on every box
   session, with each request. Run `aio-build --help` for its requests.
+- `/usr/local/bin/aio-box-review`, from the engine package, which starts a
+  review run of a box's own branch through the secrets broker and waits for
+  its result. It sends `AIO_BOX_ID`; the server takes the project from the
+  broker socket or token and refuses another project's box or another
+  branch. Run `aio-box-review --help` for its requests.
 
 The server creates each container with the keeper as its command, the
 project root mounted at its container path (the same path on Linux and

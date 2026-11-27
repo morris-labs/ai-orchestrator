@@ -2,7 +2,7 @@
 // drops the text, and Enter answers the dialog, even approving a tool call
 // (docs/build-pipeline/vendor-cli-facts.md).
 import { describe, expect, it } from "vitest";
-import { claudeInputState } from "../../src/boxes/session-input.js";
+import { claudeInputState, claudeSessionBusy } from "../../src/boxes/session-input.js";
 
 const RULE = "─".repeat(80);
 /** Claude Code puts a no-break space after its prompt sign. */
@@ -130,5 +130,35 @@ describe("claudeInputState", () => {
       "  ? for shortcuts",
     ].join("\n");
     expect(claudeInputState(boxed)).toEqual({ state: "ready" });
+  });
+});
+
+describe("claudeSessionBusy", () => {
+  it("reads a turn under way from its spinner line or its interrupt hint", () => {
+    expect(claudeSessionBusy(screen(`❯${NBSP}`, ["✶ Pondering… (12s · ↓ 1.2k tokens)"]))).toBe(
+      true,
+    );
+    expect(claudeSessionBusy(screen(`❯${NBSP}`, ["● Reading files"], "  esc to interrupt"))).toBe(
+      true,
+    );
+    expect(
+      claudeSessionBusy(
+        screen(`❯${NBSP}`, [
+          "\u001b[38;5;246m✻\u001b[39m Waiting for 4 background agents to finish",
+        ]),
+      ),
+    ).toBe(true);
+  });
+
+  it("reads a finished turn as idle", () => {
+    expect(
+      claudeSessionBusy(screen(`❯${NBSP}`, ["✻ Worked for 6m 6s · done Thursday 6:06 PM"])),
+    ).toBe(false);
+    expect(claudeSessionBusy(screen(`❯${NBSP}`))).toBe(false);
+  });
+
+  it("reads a spinner line above an earlier input box as idle", () => {
+    const old = ["✶ Pondering…", "", RULE, "❯ an old prompt", RULE, "● Done."];
+    expect(claudeSessionBusy(screen(`❯${NBSP}`, old))).toBe(false);
   });
 });

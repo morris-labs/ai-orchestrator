@@ -3,13 +3,56 @@
 // context: it rereads this file and the build plan instead. The engine
 // rewrites the file every time it saves the build's state.
 import {
+  engineDefectNote,
   escalationState,
   type BuildContractsProgress,
+  buildFlowText,
+  defaultedAnswers,
   type BuildMeeting,
   type BuildPlan,
   type BuildPlanning,
+  type BuildQuestion,
   type BuildState,
+  type FlowRecommendation,
 } from "@aio/contracts";
+
+/** The Analyst's recommendation line, or none for a plan without one. */
+function recommendationLines(recommendation: FlowRecommendation | null | undefined): string[] {
+  if (!recommendation) return [];
+  const risk = recommendation.highRisk ? "high-risk" : "not high-risk";
+  return [
+    `- Recommended flow: ${buildFlowText(recommendation.flow)} (${risk}). ${cell(recommendation.reason)}`,
+  ];
+}
+
+/**
+ * The Analyst's questions: the ones the Project manager asks the owner, and
+ * the ones it answers with the recommended answer. None for a spec without
+ * questions.
+ */
+function questionLines(questions: readonly BuildQuestion[]): string[] {
+  if (questions.length === 0) return [];
+  const ask = questions.filter((q) => q.changesCriterion);
+  const defaulted = defaultedAnswers(questions);
+  return [
+    "## Questions for the owner",
+    "",
+    "Their answers can change an acceptance criterion, so ask the owner each one.",
+    "",
+    ...(ask.length === 0
+      ? ["None."]
+      : ask.map((q) => `- ${cell(q.question)} Recommended: ${cell(q.recommendedAnswer)}`)),
+    "",
+    "## Defaulted answers",
+    "",
+    "The draft plan takes the Analyst's recommended answer for each of these.",
+    "",
+    ...(defaulted.length === 0
+      ? ["None."]
+      : defaulted.map((a) => `- ${cell(a.question)} Defaulted to: ${cell(a.answer)}`)),
+    "",
+  ];
+}
 
 function cell(text: string | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
@@ -22,6 +65,18 @@ function contractsLine(contracts: BuildContractsProgress): string {
   const commit = contracts.commit ? `, at \`${contracts.commit.slice(0, 12)}\`` : "";
   const failure = contracts.lastFailure ? `; last failure: ${cell(contracts.lastFailure)}` : "";
   return `- Contracts: ${contracts.status} after ${attempts}${commit}${failure}`;
+}
+
+/**
+ * The line for a build that an engine defect paused: the engine defect note
+ * of the latest escalation that named one.
+ */
+function defectLines(state: BuildState): string[] {
+  const note = engineDefectNote(state);
+  if (!note) return [];
+  return [
+    `- Paused for an engine defect: see \`${note}\`. Fix the engine in a separate session; the owner then resumes the build.`,
+  ];
 }
 
 /** Renders the status file for `state`. */
@@ -38,8 +93,12 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
     `- Branch: \`${state.branch}\`, in the worktree \`${state.worktree}\``,
     `- Base: \`${state.base}\``,
     ...(plan.issue ? [`- Issue: ${plan.issue.url}`] : []),
+    // A plan frozen before the flow choice runs as a pipeline build.
+    `- Flow: ${buildFlowText(plan.flow ?? "pipeline")}`,
+    ...recommendationLines(plan.recommendation),
     `- Updated: ${state.updatedAt}`,
     ...(state.note ? [`- Note: ${state.note}`] : []),
+    ...defectLines(state),
     ...(state.contracts ? [contractsLine(state.contracts)] : []),
     "",
     "## Tasks",
@@ -81,8 +140,10 @@ export function renderPlanningStatus(
     "",
     "- Status: planning",
     ...(planning.issue ? [`- Issue: ${planning.issue.url}`] : []),
+    ...recommendationLines(planning.recommendation),
     `- Updated: ${planning.updatedAt}`,
     "",
+    ...questionLines(planning.questions),
     "## Planning calls",
     "",
     ...(planning.calls.length === 0
@@ -109,10 +170,10 @@ export function renderPlanningStatus(
     "## Frozen plans",
     "",
     ...(planning.frozen.length === 0
-      ? ["None. A freeze needs the owner's approval and push answer."]
+      ? ["None. A freeze needs the owner's approval, push answer, and flow choice."]
       : planning.frozen.map(
           (f) =>
-            `- Version ${f.version}: \`${f.file}\`, frozen ${f.frozenAt}. Push: ${f.push ? "allowed" : "not allowed"}.`,
+            `- Version ${f.version}: \`${f.file}\`, frozen ${f.frozenAt}. Push: ${f.push ? "allowed" : "not allowed"}. Flow: ${buildFlowText(f.flow)}.`,
         )),
     "",
   ];

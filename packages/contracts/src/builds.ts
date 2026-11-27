@@ -64,6 +64,83 @@ const RepoPathSchema = z.string().min(1);
 export const BuildSizeSchema = z.enum(["small", "medium", "large"]);
 export type BuildSize = z.infer<typeof BuildSizeSchema>;
 
+/**
+ * How a build runs: `pipeline` through the full build team, or
+ * `single_session` as one Developer session plus one review run. See
+ * "Flow" in the design.
+ */
+export const BuildFlowSchema = z.enum(["pipeline", "single_session"]);
+export type BuildFlow = z.infer<typeof BuildFlowSchema>;
+
+/** A flow as the owner reads it: `pipeline` or `single session`. */
+export function buildFlowText(flow: BuildFlow): string {
+  return flow === "single_session" ? "single session" : "pipeline";
+}
+
+/**
+ * The Analyst's flow recommendation. A task is high-risk when it changes
+ * stored data, runs a migration, or crosses an account or security boundary
+ * across several packages.
+ */
+export const FlowRecommendationSchema = z
+  .object({
+    /** The flow the Analyst recommends. */
+    flow: BuildFlowSchema,
+    /** Whether the task is high-risk. */
+    highRisk: z.boolean(),
+    /** Why the task is or isn't high-risk, in one or two sentences. */
+    reason: z.string().min(1),
+  })
+  .strict();
+export type FlowRecommendation = z.infer<typeof FlowRecommendationSchema>;
+
+/**
+ * An open question in the Analyst's spec, with the answer the Analyst
+ * recommends. The Project manager takes the recommended answer for a
+ * question that changes no acceptance criterion, and asks the owner the
+ * rest.
+ */
+export const BuildQuestionSchema = z
+  .object({
+    /** The question, in one sentence. */
+    question: z.string().min(1),
+    /** The answer the Analyst recommends, in one or two sentences. */
+    recommendedAnswer: z.string().min(1),
+    /** Whether an answer other than the recommended one would change an acceptance criterion. */
+    changesCriterion: z.boolean(),
+  })
+  .strict();
+export type BuildQuestion = z.infer<typeof BuildQuestionSchema>;
+
+/**
+ * The flow the size threshold gives: `single_session` for a small or medium
+ * task that isn't high-risk, and `pipeline` for any other.
+ */
+export function thresholdFlow(size: BuildSize, highRisk: boolean): BuildFlow {
+  return size !== "large" && !highRisk ? "single_session" : "pipeline";
+}
+
+/**
+ * The most tasks a build plan of each size can have, or `null` for no limit.
+ * Each task costs a cold Developer start, so a smaller build gets fewer. The
+ * Contracts step doesn't count as a task.
+ */
+export const TASK_LIMITS: Readonly<Record<BuildSize, number | null>> = {
+  small: 1,
+  medium: 5,
+  large: null,
+};
+
+/**
+ * The task limit of `size` as a clause, such as "a medium build has at most 5
+ * tasks", or `null` for a size without a limit.
+ */
+export function taskLimitText(size: BuildSize): string | null {
+  const limit = TASK_LIMITS[size];
+  if (limit === null) return null;
+  return `a ${size} build has at most ${limit} ${limit === 1 ? "task" : "tasks"}`;
+}
+
 export const BuildTaskSchema = z
   .object({
     id: PlanIdSchema,
@@ -211,12 +288,8 @@ function checkMilestones(
   });
 }
 
-/**
- * The Analyst's answer: the spec. Each criterion names its verification
- * method; the size and the usage estimate are the Analyst's estimates, which
- * the owner can change.
- */
-export const BuildSpecSchema = BuildSpecTextSchema.extend({
+/** The fields of the Analyst's spec that every version of it has. */
+const BuildSpecFieldsSchema = BuildSpecTextSchema.extend({
   /** The build plan's title. */
   title: z.string().min(1),
   criteria: z.array(BuildCriterionSchema.extend({ verification: VerificationMethodSchema })).min(1),
@@ -224,18 +297,65 @@ export const BuildSpecSchema = BuildSpecTextSchema.extend({
   usageEstimate: UsageEstimateSchema,
   secrets: z.array(BuildSecretSchema).default([]),
   services: z.array(BuildServiceSchema).default([]),
-})
-  .strict()
-  .superRefine((spec, ctx) => {
-    for (const id of duplicates(spec.criteria.map((c) => c.id))) {
+  /** The open questions, each with a recommended answer and a criterion flag. */
+  questions: z.array(BuildQuestionSchema).default([]),
+});
+
+/** Adds an issue for a recommendation that breaks the size threshold, and for each criterion listed twice. */
+function checkSpec(
+  spec: {
+    size: BuildSize;
+    criteria: readonly { id: string }[];
+    recommendation: FlowRecommendation | null;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (spec.recommendation) {
+    const { flow, highRisk } = spec.recommendation;
+    const expected = thresholdFlow(spec.size, highRisk);
+    if (flow !== expected) {
       ctx.addIssue({
         code: "custom",
-        path: ["criteria"],
-        message: `criterion ${id} is listed twice`,
+        path: ["recommendation", "flow"],
+        message: `a ${spec.size} task that is ${highRisk ? "" : "not "}high-risk gets the ${expected} flow, not ${flow}`,
       });
     }
-  });
+  }
+  for (const id of duplicates(spec.criteria.map((c) => c.id))) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["criteria"],
+      message: `criterion ${id} is listed twice`,
+    });
+  }
+}
+
+/**
+ * The Analyst's answer: the spec. Each criterion names its verification
+ * method; the size and the usage estimate are the Analyst's estimates, which
+ * the owner can change. A new answer must carry a recommendation that keeps
+ * to the size threshold; `SavedBuildSpecSchema` reads saved answers.
+ */
+export const BuildSpecSchema = BuildSpecFieldsSchema.extend({
+  /** The flow the Analyst recommends, which the owner can override either way. */
+  recommendation: FlowRecommendationSchema,
+})
+  .strict()
+  .superRefine(checkSpec);
 export type BuildSpec = z.infer<typeof BuildSpecSchema>;
+
+/**
+ * A saved Analyst spec, which can come from a version before the flow
+ * recommendation: such a spec has a `null` recommendation, and its plan
+ * asks the owner for the flow without one.
+ */
+export const SavedBuildSpecSchema = BuildSpecFieldsSchema.extend({
+  /** The flow the Analyst recommends, or `null` for a spec from before recommendations. */
+  recommendation: FlowRecommendationSchema.nullable().default(null),
+})
+  .strict()
+  .superRefine(checkSpec);
+export type SavedBuildSpec = z.infer<typeof SavedBuildSpecSchema>;
 
 /** The Architect's answer: the architecture, the shared files, the milestones, and the task graph. */
 export const BuildDesignSchema = z
@@ -262,6 +382,15 @@ function duplicates(ids: readonly string[]): string[] {
   return [...new Set(ids.filter((id) => seen.size === seen.add(id).size))];
 }
 
+/** A planning question that the Project manager answered with the Analyst's recommended answer. */
+export const BuildDefaultedAnswerSchema = z
+  .object({
+    question: z.string().min(1),
+    answer: z.string().min(1),
+  })
+  .strict();
+export type BuildDefaultedAnswer = z.infer<typeof BuildDefaultedAnswerSchema>;
+
 export const BuildPlanSchema = z
   .object({
     /** The plan's version; a revised plan gets the next one. */
@@ -277,6 +406,16 @@ export const BuildPlanSchema = z
     /** The secrets the build needs, which the owner ticks for the project before approval. */
     secrets: z.array(BuildSecretSchema).default([]),
     services: z.array(BuildServiceSchema).default([]),
+    // Both flow fields are optional rather than defaulted, so that a plan
+    // frozen before them keeps its hash.
+    /** The Analyst's flow recommendation. Absent or `null` for a plan without one. */
+    recommendation: FlowRecommendationSchema.nullable().optional(),
+    /**
+     * The owner's flow choice, which can override the recommendation either
+     * way. Absent or `null` means nobody asked the owner yet, and a freeze
+     * needs it. A frozen plan without it runs as a pipeline build.
+     */
+    flow: BuildFlowSchema.nullable().optional(),
     criteria: z.array(BuildCriterionSchema).min(1),
     /** The Architect's architecture, in Markdown. */
     architecture: z.string().min(1).nullable().default(null),
@@ -306,6 +445,12 @@ export const BuildPlanSchema = z
      * `QUESTION_CAP`.
      */
     questionsPerTask: z.number().int().min(0).max(100).optional(),
+    /**
+     * The planning questions that the Project manager answered with the
+     * Analyst's recommended answer instead of asking the owner. Absent
+     * means none.
+     */
+    defaultedAnswers: z.array(BuildDefaultedAnswerSchema).optional(),
   })
   .strict()
   .superRefine((plan, ctx) => {
@@ -348,10 +493,11 @@ export interface BuildPlanExtras {
  * applies, so the owner and the Project manager can still change it.
  */
 export function draftBuildPlan(
-  spec: BuildSpec,
+  spec: SavedBuildSpec,
   design: BuildDesign,
   extras: BuildPlanExtras,
 ): BuildPlanInput {
+  const defaulted = defaultedAnswers(spec.questions);
   return {
     title: spec.title,
     issue: extras.issue ?? null,
@@ -360,6 +506,8 @@ export function draftBuildPlan(
     usageEstimate: spec.usageEstimate,
     secrets: spec.secrets,
     services: spec.services,
+    recommendation: spec.recommendation,
+    flow: null,
     criteria: spec.criteria,
     architecture: design.architecture,
     sharedFiles: design.sharedFiles,
@@ -367,7 +515,19 @@ export function draftBuildPlan(
     tasks: design.tasks,
     commands: extras.commands,
     push: extras.push ?? null,
+    // Absent rather than empty, so that a plan without questions keeps its hash.
+    ...(defaulted.length > 0 ? { defaultedAnswers: defaulted } : {}),
   };
+}
+
+/**
+ * The answers that the Project manager takes by default: the recommended
+ * answer of each question that changes no acceptance criterion.
+ */
+export function defaultedAnswers(questions: readonly BuildQuestion[]): BuildDefaultedAnswer[] {
+  return questions
+    .filter((q) => !q.changesCriterion)
+    .map((q) => ({ question: q.question, answer: q.recommendedAnswer }));
 }
 
 /** A request to start a build. */
@@ -411,6 +571,15 @@ export const BOX_BUILD_STATUSES: readonly BuildStatus[] = [
  */
 export const BuildPauseReasonSchema = z.enum(["owner", "box"]);
 export type BuildPauseReason = z.infer<typeof BuildPauseReasonSchema>;
+
+/**
+ * What paused a build: a request (`owner`), a box stop (`box`), or a
+ * resolution that names an engine defect (`engine_defect`). Only the owner's
+ * resume ends an engine defect pause, once a separate session fixed the
+ * engine.
+ */
+export const BuildPausedBySchema = z.enum(["owner", "box", "engine_defect"]);
+export type BuildPausedBy = z.infer<typeof BuildPausedBySchema>;
 
 /** The body of a pause or resume request to the engine. */
 export const BuildControlSchema = z
@@ -544,6 +713,14 @@ export type EscalationStatus = z.infer<typeof EscalationStatusSchema>;
 export const EscalationActionSchema = z.enum(["retry", "reorder", "clarify", "decide", "escalate"]);
 export type EscalationAction = z.infer<typeof EscalationActionSchema>;
 
+/**
+ * Why an escalation happened, when the resolver knows it isn't the task's
+ * own problem. `engine_defect`: a defect in the engine raised it, so the
+ * build pauses and a separate session fixes the engine.
+ */
+export const EscalationCauseSchema = z.enum(["engine_defect"]);
+export type EscalationCause = z.infer<typeof EscalationCauseSchema>;
+
 /** A part of the build plan that a resolution changes. */
 export const PlanChangeSchema = z.enum([
   "criteria",
@@ -580,13 +757,39 @@ const resolutionFields = {
    * build plan, such as a file that the plan left out of every task.
    */
   own: z.array(RepoPathSchema).min(1).optional(),
+  /**
+   * What caused the escalation. With `engine_defect`, the engine writes the
+   * note to an engine defect note and pauses the build until the owner
+   * resumes it. Needs `note`, and an action other than `escalate`.
+   */
+  cause: EscalationCauseSchema.optional(),
 };
 
 /** Adds an issue for each field that a resolution's action needs and lacks. */
 export function checkEscalationResolve(
-  r: { action: EscalationAction; note?: string; order?: string[]; decision?: unknown },
+  r: {
+    action: EscalationAction;
+    note?: string;
+    order?: string[];
+    decision?: unknown;
+    cause?: EscalationCause;
+  },
   ctx: z.RefinementCtx,
 ): void {
+  if (r.cause === "engine_defect" && r.note === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["note"],
+      message: "an engine defect needs note, which describes the defect",
+    });
+  }
+  if (r.cause === "engine_defect" && r.action === "escalate") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["cause"],
+      message: "an engine defect pauses the build for the owner already: use another action",
+    });
+  }
   const needs: Partial<Record<EscalationAction, "note" | "order" | "decision">> = {
     reorder: "order",
     clarify: "note",
@@ -638,6 +841,11 @@ export const EscalationSchema = z.object({
   ownerReason: z.string().min(1).optional(),
   /** How the escalation was resolved, once it was. */
   resolution: EscalationResolutionSchema.optional(),
+  /**
+   * The engine defect note, relative to the build directory, when the
+   * resolution named an engine defect as the cause.
+   */
+  defectNote: z.string().min(1).optional(),
   createdAt: IsoDateTimeSchema,
 });
 export type Escalation = z.infer<typeof EscalationSchema>;
@@ -648,6 +856,19 @@ export function escalationState(e: Escalation): string {
     return `resolved by the ${e.resolution.by.replace("_", " ")}: ${e.resolution.action}`;
   }
   return `open, pauses ${e.tasks.length > 0 ? e.tasks.join(", ") : "the build"}`;
+}
+
+/**
+ * The engine defect note that holds a build paused for an engine defect:
+ * the note of the latest escalation that names one. `undefined` for a
+ * build that isn't paused for an engine defect.
+ */
+export function engineDefectNote(state: {
+  pausedBy?: BuildPausedBy;
+  escalations: readonly Pick<Escalation, "defectNote">[];
+}): string | undefined {
+  if (state.pausedBy !== "engine_defect") return undefined;
+  return [...state.escalations].reverse().find((e) => e.defectNote)?.defectNote;
 }
 
 /** A build's saved state, in `.aio/builds/SLUG/state.json`. */
@@ -682,8 +903,8 @@ export const BuildStateSchema = z.object({
   placements: BuildPlacementsSchema,
   /** The end of a timed pause, such as a vendor's limit reset. */
   pausedUntil: IsoDateTimeSchema.optional(),
-  /** Who paused the build, while it is paused by a request or a box stop. */
-  pausedBy: BuildPauseReasonSchema.optional(),
+  /** Who paused the build, while it is paused by a request, a box stop, or an engine defect. */
+  pausedBy: BuildPausedBySchema.optional(),
   /**
    * `true` while the build is paused and the pause holds: no agent call or
    * gate runs, so the worktree stays as it is until a resume. Absent while

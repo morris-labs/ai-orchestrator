@@ -9,6 +9,7 @@ import type {
   BuildDecision,
   BuildPlan,
   BuildPauseReason,
+  BuildPausedBy,
   BuildState,
   BuildStatus,
   BuildStep,
@@ -29,10 +30,11 @@ import { writeClosingRecord } from "./closing-record.js";
 import { BuildContext, type BuildServices } from "./context.js";
 import { ulid } from "./ids.js";
 import { loadRoles, type LoadRolesOptions } from "./roles/index.js";
-import { BUILD_PIPELINE, STEP_HANDLERS, type StepHandler } from "./steps/index.js";
+import { BUILD_PIPELINE, STEP_HANDLERS, stepsForFlow, type StepHandler } from "./steps/index.js";
 import { checkPlan } from "./plan-check.js";
 import { resolveEscalation } from "./resolve.js";
 import { BuildStore } from "./store.js";
+import { recordFinishedBuild } from "./usage-history.js";
 import { BuildWorktree } from "./worktree.js";
 
 /** Where a build lives and what it runs on. */
@@ -94,11 +96,16 @@ export class BuildController {
   /** The closing record under way after a cancel. */
   private closing: Promise<void> | null = null;
 
+  /** The steps this build runs, in order: the pipeline's, less the ones its flow skips. */
+  private readonly steps: readonly BuildStep[];
+
   private constructor(
     readonly ctx: BuildContext,
     private readonly log: BuildServices["log"],
     private readonly pipeline: BuildPipeline,
-  ) {}
+  ) {
+    this.steps = stepsForFlow(pipeline.steps, ctx.plan.flow);
+  }
 
   get state(): BuildState {
     return this.ctx.state;
@@ -117,10 +124,11 @@ export class BuildController {
    * Creates a build: its directory, plan, state, branch, and worktree.
    * Throws `WorktreeConflict` when the branch or the worktree exists. A
    * build that planning started keeps the id, creation time, and box of
-   * its planning record in `origin`.
+   * its planning record in `origin`. `taskLimit` `false` skips the task
+   * limit, for a plan that a version before the limit froze.
    */
   static async create(
-    request: BuildCreate & { plan: BuildPlan },
+    request: BuildCreate & { plan: BuildPlan; taskLimit?: boolean },
     location: BuildLocation,
     services: Omit<BuildServices, "tierModels" | "sessions">,
     pipeline: BuildPipeline = DEFAULT_PIPELINE,
@@ -135,7 +143,12 @@ export class BuildController {
       branch,
     );
     const roles = await loadRoles(repoPath, location.roles);
-    await checkPlan(request.plan, roles, { repoRoot: repoPath, skillDirs: services.skillDirs() });
+    await checkPlan(
+      request.plan,
+      roles,
+      { repoRoot: repoPath, skillDirs: services.skillDirs() },
+      { taskLimit: request.taskLimit ?? true },
+    );
     const full = await servicesFor(location, services);
     const base = await worktree.resolveBase(request.base);
     await worktree.create(base);
@@ -155,7 +168,7 @@ export class BuildController {
       branch,
       worktree: worktree.path,
       status: "running",
-      step: pipeline.steps[0] ?? "tasks",
+      step: stepsForFlow(pipeline.steps, request.plan.flow)[0] ?? "tasks",
       tasks: request.plan.tasks.map((t) => ({
         id: t.id,
         status: "pending",
@@ -199,6 +212,8 @@ export class BuildController {
     const roles = await loadRoles(state.repoPath, location.roles);
     const full = await servicesFor(location, services);
     const ctx = new BuildContext(state, plan, ledger, store, worktree, roles, full);
+    // A person's pause outlasts the engine: no call, such as a message turn, starts until the resume.
+    if (state.status === "paused" && state.pausedBy !== undefined) ctx.calls.requestPause();
     return new BuildController(ctx, services.log, pipeline);
   }
 
@@ -252,10 +267,11 @@ export class BuildController {
         // it started finish before the next step.
         await ctx.sessions.idle();
         await ctx.calls.checkpoint();
-        const next = this.pipeline.steps[this.pipeline.steps.indexOf(step) + 1];
+        const next = this.steps[this.steps.indexOf(step) + 1];
         if (!next) {
           // The last step's note, such as where its digest is, stays.
           await ctx.setStatus("finished", ctx.state.note);
+          await this.recordUsage();
           return;
         }
         await ctx.setStep(next);
@@ -265,6 +281,21 @@ export class BuildController {
     } finally {
       // A pause that came in meanwhile holds once no call runs.
       await ctx.calls.endDrive();
+    }
+  }
+
+  /**
+   * Adds the finished build's corrected usage to the usage estimate table.
+   * A failure only logs: the build stays finished.
+   */
+  private async recordUsage(): Promise<void> {
+    try {
+      await recordFinishedBuild(this.ctx);
+    } catch (error) {
+      this.log.error("Couldn't add a finished build's usage to the usage estimate table", {
+        build: this.slug,
+        error: describeError(error),
+      });
     }
   }
 
@@ -299,6 +330,11 @@ export class BuildController {
    * so a resolution doesn't resume it until the resume.
    */
   async pause(reason: BuildPauseReason = "owner"): Promise<BuildState> {
+    return this.hold(reason);
+  }
+
+  /** Pauses the build for `reason`, as `pause` describes. */
+  private async hold(reason: BuildPausedBy): Promise<BuildState> {
     this.requireLive("pause");
     const { status, pausedUntil, pausedBy } = this.state;
     const timed = status === "paused" && pausedUntil !== undefined && pausedBy === undefined;
@@ -485,6 +521,7 @@ export class BuildController {
       throw new EngineError("invalid_state", `Build ${this.slug} stops with the engine.`);
     }
     if ((await resolveEscalation(this.ctx, request)) === "owner") return this.state;
+    if (request.cause === "engine_defect") return this.holdForDefect();
     // A cancel under way ends the build, so the resolution doesn't resume it.
     if (!this.resumable() || this.cancelling) return this.state;
     if (this.driver) {
@@ -494,6 +531,22 @@ export class BuildController {
     if (this.state.status === "waiting_escalation") await this.ctx.setStatus("running");
     this.start();
     return this.state;
+  }
+
+  /**
+   * Pauses the build after a resolution that names an engine defect, so no
+   * seat runs until the owner resumes it, after a separate session fixes
+   * the engine. A build that is paused already keeps its pause, which only
+   * the owner's resume ends from now on.
+   */
+  private async holdForDefect(): Promise<BuildState> {
+    if (this.cancelling) return this.state;
+    if (this.state.status === "paused" && this.state.pausedUntil === undefined) {
+      this.ctx.state.pausedBy = "engine_defect";
+      await this.ctx.persist();
+      return this.state;
+    }
+    return this.hold("engine_defect");
   }
 
   /**

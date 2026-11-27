@@ -61,7 +61,7 @@ describe("App with the scripted event stream", () => {
         notificationId: "usage-1",
         kind: "usage_alert",
         title: "Build settings-page passed 2 times its usage estimate",
-        body: "The build used 2,100 tokens against an estimate of 500 to 1,000.",
+        body: "The build used 2,100 tokens in against an estimate of 500 to 1,000.",
         runId: null,
         boxId: "aio-agent-site",
         buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { LeaseRequest } from "@aio/contracts";
 import { GrantingBroker, type EventDraft } from "../../src/core.js";
-import { RunCancelled, basicRouting } from "../../src/calls/index.js";
+import { CallHeld, RunCancelled, basicRouting } from "../../src/calls/index.js";
 import { buildSampleRepo } from "../state/scenario.js";
 import { uniqueRunId } from "../state/run-ids.js";
 import { answering, hanging, limited, makeCaller, spec, type Answer } from "./caller.js";
@@ -250,5 +250,27 @@ describe("AgentCalls for a caller that isn't a review run", () => {
 
     expect(codex.calls).toBe(1);
     expect(statuses).toEqual(["paused", "running"]);
+  });
+
+  it("stops a background call at a pause with CallHeld, before its vendor call, and keeps the caller held", async () => {
+    const repo = buildSampleRepo();
+    const codex = answering("codex");
+    const { calls, statuses } = makeCaller({ codex });
+    await calls.beginDrive();
+    await calls.endDrive();
+
+    calls.requestPause();
+    await expect(calls.call<Answer>({ ...spec(repo), background: true })).rejects.toBeInstanceOf(
+      CallHeld,
+    );
+    expect(codex.calls).toBe(0);
+    expect(calls.held).toBe(true);
+    expect(statuses).toEqual([]);
+
+    const resumed = calls.untilResumed();
+    calls.requestResume();
+    await resumed;
+    await calls.call<Answer>({ ...spec(repo), background: true });
+    expect(codex.calls).toBe(1);
   });
 });

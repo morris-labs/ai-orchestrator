@@ -82,6 +82,7 @@ const task = (id: string, title: string, module: string, dependsOn: string[] = [
 function threeTaskPlan(): BuildPlanInput {
   return cartPlan({
     title: "Cart total, discount, and receipt",
+    size: "medium",
     criteria: ["T1", "T2", "T3"].map((id) => ({ id: `AC-${id}`, text: `Task ${id} works.` })),
     tasks: [
       task("T3", "Receipt", "receipt", ["T2"]),
@@ -128,6 +129,19 @@ const TEST_ENGINEER: MockResponse = {
 };
 
 /** A three-task plan whose one test command runs the whole suite. */
+/** The coverage check of a medium build's tests first, which finds no gaps. */
+const COVERAGE: MockResponse = {
+  match: "Coverage check",
+  output: {
+    summary: "Read each criterion.",
+    criteria: ["T1", "T2", "T3"].map((id) => ({
+      id: `AC-${id}`,
+      checked: true,
+      reason: "A test asserts it.",
+    })),
+  },
+};
+
 function suitePlan(): BuildPlanInput {
   const plan = threeTaskPlan();
   return { ...plan, commands: { ...plan.commands, test: [{ command: "node --test" }] } };
@@ -190,6 +204,7 @@ describe("a multi-task build", () => {
     world.script({
       codex: [TEST_ENGINEER],
       claude: [
+        COVERAGE,
         answer("T1", { "src/cart.mjs": CART_DONE }),
         answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
         answer("T3", { "src/receipt.mjs": RECEIPT_DONE }),
@@ -219,7 +234,7 @@ describe("a multi-task build", () => {
     addModules(world, { tests: false });
     world.script({
       codex: [TEST_ENGINEER],
-      claude: [{ ...answer("T1", { "src/cart.mjs": CART_WRONG }), times: 4 }],
+      claude: [COVERAGE, { ...answer("T1", { "src/cart.mjs": CART_WRONG }), times: 4 }],
     });
 
     await world.start("suite", suitePlan());

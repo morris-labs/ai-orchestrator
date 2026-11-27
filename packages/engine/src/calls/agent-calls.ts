@@ -26,6 +26,7 @@ import {
 import { TreeGuard } from "../state/tree-guard.js";
 import {
   AgentFailed,
+  CallHeld,
   CallTimeout,
   RoleDenied,
   RunCancelled,
@@ -60,6 +61,12 @@ const MAX_SLEEP_MS = 2_000_000_000;
 
 /** The vendors the engine knows, in a fixed order. */
 const VENDORS = ["claude", "codex", "copilot"] as const;
+
+/**
+ * How long a stopped call waits for its adapter to end the CLI and report
+ * what the call spent, before the call gives up on the report.
+ */
+const STOP_REPORT_MS = 5_000;
 
 const ZERO_USE: LeaseActual = { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 };
 
@@ -172,19 +179,40 @@ export class AgentCalls {
     this.requestResume();
   }
 
+  /** True while a person's pause is requested, until the resume. */
+  get pausing(): boolean {
+    return this.pauseRequested;
+  }
+
+  /**
+   * Resolves when no person's pause holds the caller: at once without one,
+   * otherwise at the resume, a cancel, or a stopped driver. It changes no
+   * status, so work that no driver waits on can wait here.
+   */
+  untilResumed(): Promise<void> {
+    if (!this.pauseRequested) return Promise.resolve();
+    return this.gate().promise;
+  }
+
+  /** The gate that held callers wait on, made on first use. */
+  private gate(): { promise: Promise<void>; open: () => void } {
+    if (this.pauseGate) return this.pauseGate;
+    let open = () => undefined as void;
+    const promise = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    this.pauseGate = { promise, open };
+    return this.pauseGate;
+  }
+
   /** Called between agent calls: honors a pause or a cancel. */
   async checkpoint(): Promise<void> {
     this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (!this.pauseRequested) return;
-    let gate = this.pauseGate;
-    if (!gate) {
-      let open = () => undefined as void;
-      const promise = new Promise<void>((resolve) => {
-        open = resolve;
-      });
-      gate = { promise, open };
-      this.pauseGate = gate;
+    const fresh = this.pauseGate === null;
+    const gate = this.gate();
+    if (fresh) {
       // A person's pause has no end time, even when it follows a timed wait.
       await this.host.status.pause(undefined);
     }
@@ -198,6 +226,14 @@ export class AgentCalls {
     this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (this.host.status.paused()) await this.host.status.resume();
+  }
+
+  /** A call's checkpoint: a background call throws `CallHeld` where another call would wait. */
+  private async callCheckpoint(work: CallWork): Promise<void> {
+    if (work.background && this.pauseRequested && !this.stopped && !this.cancelRequested) {
+      throw new CallHeld();
+    }
+    await this.checkpoint();
   }
 
   /**
@@ -350,11 +386,11 @@ export class AgentCalls {
     const routing = this.host.routing;
     let vendor = start;
     for (;;) {
-      await this.checkpoint();
+      await this.callCheckpoint(spec);
       vendor = this.assigned(spec, vendor);
       const limit = this.limitOf(vendor);
       if (!limit) return vendor;
-      const movable = routing.movable(spec);
+      const movable = routing.movable(spec, limit);
       if (movable) {
         const next = this.fallbackVendor(spec.role, spec.avoid);
         if (next) {
@@ -411,7 +447,7 @@ export class AgentCalls {
     const host = this.host;
     let waiting = false;
     for (;;) {
-      await this.checkpoint();
+      await this.callCheckpoint(work);
       // A redirect to one of these would only stop the call, so the server
       // leaves them out and pauses when nothing is left.
       const exclude = host.routing.fallbackOrder.filter(
@@ -563,7 +599,8 @@ export class AgentCalls {
         return outcome;
       },
       async (error: unknown) => {
-        await this.track(spec, error instanceof RunCancelled ? "skipped" : "failed");
+        const skipped = error instanceof RunCancelled || error instanceof CallHeld;
+        await this.track(spec, skipped ? "skipped" : "failed");
         throw error;
       },
     );
@@ -753,6 +790,27 @@ export class AgentCalls {
             costEstimate: 0,
           });
           await settleLease(spent);
+          try {
+            await host.cache.failed?.({
+              key: spec.key,
+              agentId,
+              vendor,
+              model,
+              ...(spec.seat !== undefined ? { seat: spec.seat } : {}),
+              ...(spec.step !== undefined ? { step: spec.step } : {}),
+              outcome,
+              error: describeError(error),
+              tokens: spent.tokens,
+              elapsedMs,
+            });
+          } catch (recordError) {
+            // The call's own failure says more than this one.
+            log?.warn("Could not save a failed call's record", {
+              runId: host.id,
+              agentId,
+              error: describeError(recordError),
+            });
+          }
           if (outcome === "cancelled") throw new RunCancelled();
           log?.warn("An agent call failed", {
             runId: host.id,
@@ -889,9 +947,28 @@ export class AgentCalls {
     // pile listeners onto its signal.
     const signal = this.signal;
     const own = spec.signal;
+    let call: Promise<unknown> | undefined;
+    let stopping = false;
     const onAbort = () => {
+      stopping = true;
       controller.abort(signal.aborted ? signal.reason : own?.reason);
-      rejectAborted(new RunCancelled());
+      const cancelled = new RunCancelled();
+      if (!call) {
+        rejectAborted(cancelled);
+        return;
+      }
+      // A stopped call spent tokens too: the adapter ends the CLI and puts
+      // what the call spent on its error, so wait a little for it.
+      const giveUp = setTimeout(() => rejectAborted(cancelled), STOP_REPORT_MS);
+      giveUp.unref?.();
+      call
+        .catch((error: unknown) => {
+          cancelled.tokens = (error as { tokens?: unknown } | null)?.tokens;
+        })
+        .finally(() => {
+          clearTimeout(giveUp);
+          rejectAborted(cancelled);
+        });
     };
     if (signal.aborted || own?.aborted) onAbort();
     else {
@@ -918,11 +995,13 @@ export class AgentCalls {
     };
     try {
       // A named session is resumed whatever the method; a continuation needs one.
-      const call =
+      call =
         spec.method === "continueReview"
           ? adapter.continueReview({ ...request, sessionId: sessionId ?? "" })
           : adapter[spec.method](sessionId !== undefined ? { ...request, sessionId } : request);
-      return (await Promise.race([call, guard, aborted])) as AdapterResult<T>;
+      // A call that ends after its stop still counts as stopped.
+      const ended = call.then((result) => (stopping ? aborted : result));
+      return (await Promise.race([ended, guard, aborted])) as AdapterResult<T>;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);

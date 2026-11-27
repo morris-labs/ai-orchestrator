@@ -9,6 +9,11 @@
 // criteria, the scope, or the milestones belongs to the owner, so the engine
 // marks such an escalation for the owner instead of resolving it, and an
 // escalation for the owner takes only a decision that names the owner.
+//
+// A resolution can name an engine defect as the escalation's cause. The
+// engine then writes the resolver's note to an engine defect note in the
+// build directory, for a separate session that fixes the engine, and the
+// controller pauses the build until the owner resumes it.
 import {
   OWNER_PLAN_CHANGES,
   type Escalation,
@@ -149,6 +154,55 @@ async function checkOwn(
   }
 }
 
+/** Where the engine defect note of escalation `id` goes, relative to the build directory. */
+export function defectNotePath(id: string): string {
+  return `engine-defects/${id}.md`;
+}
+
+/**
+ * Writes the engine defect note for `escalation`: what the resolver found,
+ * what the escalation says, and what the separate session does. Returns the
+ * note's path relative to the build directory.
+ */
+async function writeDefectNote(
+  ctx: BuildContext,
+  escalation: Escalation,
+  request: EscalationResolve,
+): Promise<string> {
+  const file = defectNotePath(escalation.id);
+  const saved = await ctx.store.readJson<{ details?: unknown }>(
+    ctx.store.escalationPath(escalation.id),
+  );
+  const details = typeof saved?.details === "string" ? saved.details.trim() : "";
+  const { slug } = ctx.state;
+  const lines = [
+    `# Engine defect: build ${slug}, escalation ${escalation.id}`,
+    "",
+    "The Project manager found that an engine defect raised this escalation.",
+    "The build is paused until the owner resumes it. Fix the engine in a",
+    "separate session, not in the build's session, and install the fix. Then",
+    `the owner resumes the build with \`aio-build resume ${slug}\`, and the`,
+    `resolution (${request.action}) runs.`,
+    "",
+    "## The defect",
+    "",
+    request.note ?? "",
+    "",
+    "## The escalation",
+    "",
+    `- ID: ${escalation.id}`,
+    `- Kind: ${escalation.kind}`,
+    `- Task: ${escalation.taskId ?? "none, a build step"}`,
+    `- Step: ${ctx.state.step}`,
+    `- File: \`${escalation.file}\``,
+    `- Summary: ${escalation.summary}`,
+    "",
+    ...(details ? ["## Details", "", "```text", details, "```", ""] : []),
+  ];
+  await ctx.store.writeText(ctx.store.path(file), lines.join("\n"));
+  return file;
+}
+
 /**
  * Resolves escalation `request.escalation` of the build, or marks it for the
  * owner. Throws `EngineError`: `not_found` for an unknown escalation,
@@ -197,6 +251,9 @@ export async function resolveEscalation(
   if (request.push !== undefined) await ctx.recordPush(request.push);
   if (request.own && escalation.taskId) await ctx.recordOwned(escalation.taskId, request.own);
   if (request.action === "reorder" && request.order) ctx.state.taskOrder = request.order;
+  if (request.cause === "engine_defect") {
+    escalation.defectNote = await writeDefectNote(ctx, escalation, request);
+  }
   reopenTask(ctx, escalation);
   escalation.status = "resolved";
   escalation.resolution = {
@@ -207,6 +264,7 @@ export async function resolveEscalation(
     ...(request.decision !== undefined ? { decision: request.decision } : {}),
     ...(request.push !== undefined ? { push: request.push } : {}),
     ...(request.own !== undefined ? { own: request.own } : {}),
+    ...(request.cause !== undefined ? { cause: request.cause } : {}),
     changes: request.changes,
     resolvedAt: now,
   };

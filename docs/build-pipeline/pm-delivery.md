@@ -17,6 +17,7 @@ inbox survives an engine restart. The engine adds one item for each of these:
 | :-- | :-- | :-- | :-- |
 | An escalation | `E1`, `E2`, and so on | `escalations/ID.json` | Yes |
 | A milestone digest | `milestone-ID` | `digests/milestone-ID.md` | No |
+| A milestone hand-off | `milestone-ID` | `handoffs/milestone-ID.md` | No |
 | The release ready digest | `release-ready` | `digests/release-ready.md` | No |
 | A cancelled build's closing record | `closing-record-1`, `closing-record-2`, and so on | `closing-record.md` | No |
 
@@ -76,6 +77,40 @@ The engine runs the tasks of every milestone in one tasks step, so a
 milestone ends when its last task passes. A build plan without milestones
 has one, `all`, that holds every task.
 
+## The Project manager hand-off
+
+The Project manager's context grows with every turn, and each request
+resends it. To keep it the size of one milestone, the Project manager starts
+a fresh session at each milestone end. Right after a milestone's digest,
+the engine writes the milestone's hand-off file from the build's files and
+adds it to the inbox. A hand-off holds these sections:
+
+- **Plan state:** the build's status and step, the plan version, each
+  milestone's progress, and each task's status, attempts, and commit.
+- **Open escalations:** every escalation that waits, with what it pauses
+  and its file.
+- **Owner decisions:** the push answer, the owner's answers to
+  escalations, and the owner posts that the build recorded as decisions.
+- **Defaulted answers:** the planning questions that the build plan's
+  `defaultedAnswers` list answers with the Analyst's recommended answer.
+- **Usage to date:** what the build's settled agent calls spent since the
+  build started, by seat, and the Project manager's own tokens since
+  planning started.
+
+The hand-off's pointer tells the Project manager to start a fresh session
+from the file, and names what comes next:
+
+```
+[aio-build cart-label I2] Start a fresh Project manager session from this hand-off file: milestone M1 (Cart total) is done, and milestone M2 (Labels) is next. Read /work/shop/.aio/builds/cart-label/handoffs/milestone-M1.md
+```
+
+The server starts the fresh session itself: before it types a hand-off
+pointer, it clears the session with `/clear`, so the owner doesn't have to;
+see "How the server types a pointer". The `aio-build` skill has the Project
+manager report the digest and triage what waits before the hand-off. The
+cleared session recovers the build from the newest hand-off file and the
+inbox, and reads digests and escalation files, not diffs or full logs.
+
 ## The Project manager's usage
 
 The Project manager's session makes no engine calls, so no lease settlement
@@ -125,8 +160,27 @@ suggestion reads as unsent text, and the item waits until someone clears
 the box.
 
 A busy session that shows its input box takes the pointer: Claude Code
-queues it as the next turn. The server types the text, waits, and sends
-Enter in a separate call. The item counts as delivered once the session's
+queues it as the next turn. A hand-off pointer is the exception, since the
+server clears the session first:
+
+1. The server clears only an idle session. While the screen shows a turn
+   under way, such as a spinner line above the input box or the wait for
+   background agents, the hand-off waits, since `/clear` would cut the turn
+   short.
+2. The server types `/clear`, waits, and sends Enter in a separate call.
+3. The server waits for the input box to show again, empty and idle. The
+   session that `/clear` starts has a new session ID and a transcript of its
+   own. The session watcher writes the new ID to the box's record, and the
+   server confirms the pointer in the new transcript.
+4. The server types the pointer.
+
+When the transcript holds the hand-off's marker already, the server
+neither clears the session nor types the pointer. The server types nothing
+into a Codex or GitHub Copilot session, so it clears neither: the hand-off
+waits in the inbox, like every other item for such a session.
+
+For every pointer, the server types the text, waits, and sends Enter in a
+separate call. The item counts as delivered once the session's
 transcript shows its marker. When the transcript holds the marker already,
 the server marks the item delivered without typing it again.
 

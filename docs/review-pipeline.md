@@ -421,6 +421,15 @@ The engine then acts in the following order:
    with a `ceiling` decision. To go on, assign the role to another vendor or fix
    the vendor's quota, then resume.
 
+A build's review run skips the first step for a limit with a reset time and
+waits for the reset, like every build call. It moves a call only off a quota
+with no reset time.
+
+A stand-alone review run, one that no build started, needs no such
+exception: it takes the first step for every limit, a quota with no reset
+time included, so it waits for you only when no other vendor can take the
+role. A build's review run reaches the same `ceiling` decision in that case.
+
 A rate limit with no reset time blocks its vendor for 15 minutes. When you
 resume or retry a run, the engine forgets the limits it remembers, and when you
 assign a role to a vendor, it forgets that vendor's limit. If the vendor is
@@ -491,8 +500,10 @@ rules, and each build with a third:
   window at 100% always counts.
 - **Jump alert:** the window's usage rose by more than `jump` since the
   lowest reading of the last `jumpMinutes` minutes.
-- **Build estimate alert:** a build's tokens in and out pass
-  `buildEstimateFactor` times the high end of its plan's usage estimate.
+- **Build estimate alert:** a build's tokens in pass `buildEstimateFactor`
+  times the high end of its plan's usage estimate. The count covers the
+  build's agent calls and review runs, with each resumed session counted
+  once, and leaves out the Project manager's session, as the estimate does.
   Each build gets this alert once.
 
 A window rule alerts when it starts to hold, not again while it keeps

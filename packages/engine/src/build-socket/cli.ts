@@ -13,8 +13,11 @@ import {
   MEETING_ROUND_MAX,
   MeetingIdSchema,
   RoleNameSchema,
+  engineDefectNote,
   escalationState,
   type BuildDecision,
+  buildFlowText,
+  type BuildFlow,
   type BuildFreezeAnswer,
   type BuildMeetingAnswer,
   type BuildIssueInput,
@@ -38,7 +41,8 @@ export const BUILD_USAGE = `Usage:
   aio-build meet SLUG BRIEF_FILE [--members SEAT,...] [--proposer SEAT] [--rounds N] [--json]
   aio-build meeting-post SLUG MEETING POST_FILE [--json]
   aio-build meeting-end SLUG MEETING [--json]
-  aio-build freeze SLUG [PLAN_FILE] [--push yes|no] [--json]
+  aio-build freeze SLUG [PLAN_FILE] [--push yes|no]
+                   [--flow pipeline|single-session] [--json]
   aio-build start SLUG [PLAN_FILE] [--base REF] [--json]
   aio-build status SLUG [--json]
   aio-build pause SLUG [--json]
@@ -49,7 +53,8 @@ export const BUILD_USAGE = `Usage:
   aio-build cancel SLUG [--json]
   aio-build resolve SLUG ESCALATION ACTION [--note TEXT] [--order TASKS]
                     [--decision OPTION] [--waive FINDINGS] [--push yes|no]
-                    [--changes PARTS] [--own FILES] [--owner] [--json]
+                    [--changes PARTS] [--own FILES] [--engine-defect]
+                    [--owner] [--json]
   aio-build help
 
 Plans and drives a build of this box's project through the AI Orchestrator
@@ -85,7 +90,9 @@ Requests:
             .aio/builds/SLUG/plans/; a frozen version never changes. The
             freeze needs the owner's answer to whether the build can push
             its branch and open its pull request: ask the owner, then pass
-            --push yes or --push no.
+            --push yes or --push no. It also needs the owner's flow choice,
+            after you show the owner the Analyst's recommendation: pass
+            --flow pipeline or --flow single-session.
   start     Start build SLUG from its latest frozen plan, or from the plan
             in PLAN_FILE when it has none. The build works on the branch
             build/SLUG in its own worktree. --base REF names the branch,
@@ -136,6 +143,11 @@ Requests:
             pass --owner. For a release ready escalation, ask the owner
             whether the build can push its branch and open its pull
             request, then pass --push yes or --push no with --owner.
+            When an engine defect raised the escalation, pass
+            --engine-defect with the defect in --note: the engine writes
+            an engine defect note in the build directory and pauses the
+            build. Don't fix the engine in this session. A separate session
+            fixes it, and the owner resumes the build.
 
 A build that a box started takes pause, resume, and cancel requests only
 from that box. Any box of the project can read its status.
@@ -152,9 +164,14 @@ Options:
   --proposer SEAT
                  The seat whose proposal a meeting discusses. Default:
                  architect.
-  --rounds N     A meeting's round cap, from 1 to ${MEETING_ROUND_MAX}. Default: 3.
+  --rounds N     A meeting's round cap, from 1 to ${MEETING_ROUND_MAX}. Default: 1 for a
+                 small or medium build, 3 for a large one.
   --push yes|no  The owner's answer to whether the build can push its branch
                  and open its pull request.
+  --flow pipeline|single-session
+                 The owner's flow choice: a pipeline build through the full
+                 build team, or one Developer session plus one review run
+                 whose confirmed findings go back to that session.
   --note TEXT    Why, or the clarification itself for clarify.
   --order TASKS  The task IDs in the order they run, separated by commas,
                  such as T2,T1.
@@ -173,6 +190,10 @@ Options:
                  engine adds them to the task's owned files in the build
                  plan. A test path, and a file that another unfinished task
                  owns, stay out.
+  --engine-defect
+                 Name an engine defect as the escalation's cause. Needs
+                 --note, which describes the defect, and an action other
+                 than escalate. The build pauses until the owner resumes it.
   --owner        Record the decision as the owner's, which the Project
                  manager relays.
   --direct       Print only the direct messages to the owner.
@@ -230,7 +251,14 @@ export type BuildCommand =
     }
   | { kind: "meeting-post"; slug: string; meeting: string; postFile: string; json: boolean }
   | { kind: "meeting-end"; slug: string; meeting: string; json: boolean }
-  | { kind: "freeze"; slug: string; planFile: string | null; push: boolean | null; json: boolean }
+  | {
+      kind: "freeze";
+      slug: string;
+      planFile: string | null;
+      push: boolean | null;
+      flow: BuildFlow | null;
+      json: boolean;
+    }
   | { kind: "start"; slug: string; planFile: string | null; base: string | null; json: boolean }
   | { kind: "messages"; slug: string; direct: boolean; json: boolean }
   | { kind: "decisions"; slug: string; json: boolean }
@@ -281,7 +309,7 @@ const KINDS = new Set([
 const OPTIONS: Record<string, readonly string[]> = {
   plan: ["--issue"],
   meet: ["--members", "--proposer", "--rounds"],
-  freeze: ["--push"],
+  freeze: ["--push", "--flow"],
   start: ["--base"],
   resolve: [
     "--note",
@@ -291,6 +319,7 @@ const OPTIONS: Record<string, readonly string[]> = {
     "--push",
     "--changes",
     "--own",
+    "--engine-defect",
     "--owner",
   ],
   inbox: ["--all"],
@@ -301,6 +330,7 @@ const VALUE_OPTIONS = [
   "--base",
   "--issue",
   "--push",
+  "--flow",
   "--members",
   "--proposer",
   "--rounds",
@@ -313,7 +343,7 @@ const VALUE_OPTIONS = [
 ];
 
 /** Options that take no value. */
-const FLAGS = ["--owner", "--all"];
+const FLAGS = ["--owner", "--all", "--engine-defect"];
 
 /** Splits a comma-separated list, dropping empty items. */
 function list(text: string): string[] {
@@ -327,6 +357,13 @@ function list(text: string): string[] {
 function pushAnswer(answer: string): boolean {
   if (answer !== "yes" && answer !== "no") throw new Error("--push takes yes or no.");
   return answer === "yes";
+}
+
+/** Parses a `--flow` choice. */
+function flowChoice(choice: string): BuildFlow {
+  if (choice === "pipeline") return "pipeline";
+  if (choice === "single-session") return "single_session";
+  throw new Error("--flow takes pipeline or single-session.");
 }
 
 /**
@@ -365,6 +402,7 @@ function resolution(
     ...(push !== undefined ? { push: pushAnswer(push) } : {}),
     ...(changes !== undefined ? { changes: list(changes) } : {}),
     ...(own !== undefined ? { own: list(own) } : {}),
+    ...(flags.has("--engine-defect") ? { cause: "engine_defect" } : {}),
   };
 }
 
@@ -491,7 +529,15 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
     const planFile = positional[1] ?? null;
     if (kind === "start") return { kind, slug, planFile, base: values.get("--base") ?? null, json };
     const answer = values.get("--push");
-    return { kind, slug, planFile, push: answer === undefined ? null : pushAnswer(answer), json };
+    const flow = values.get("--flow");
+    return {
+      kind,
+      slug,
+      planFile,
+      push: answer === undefined ? null : pushAnswer(answer),
+      flow: flow === undefined ? null : flowChoice(flow),
+      json,
+    };
   }
   if (kind === "resolve") {
     return { kind, slug, resolution: resolution(positional, values, flags), json };
@@ -523,6 +569,14 @@ function issueLines(details: unknown): string {
     .join("");
 }
 
+/** Who paused the build, in a few words, with the engine defect note for an engine defect. */
+function pausedByText(build: BuildState): string {
+  if (build.pausedBy === "box") return "a box stop";
+  if (build.pausedBy !== "engine_defect") return "a request";
+  const note = engineDefectNote(build);
+  return `an engine defect${note ? `, see ${note}` : ""}; the owner resumes the build once a separate session fixes the engine`;
+}
+
 /** The build's state as text for a person to read. */
 export function formatBuild(build: BuildState): string {
   const lines = [
@@ -532,8 +586,7 @@ export function formatBuild(build: BuildState): string {
     `Worktree: ${build.worktree}`,
   ];
   if (build.boxId) lines.push(`Box: ${build.boxId}`);
-  if (build.pausedBy)
-    lines.push(`Paused by: ${build.pausedBy === "box" ? "a box stop" : "a request"}`);
+  if (build.pausedBy) lines.push(`Paused by: ${pausedByText(build)}`);
   if (build.pausedUntil) lines.push(`Paused until: ${build.pausedUntil}`);
   if (build.deletedAt) lines.push(`Deleted: ${build.deletedAt}`);
   if (build.note) lines.push(`Note: ${build.note}`);
@@ -639,6 +692,13 @@ export function formatPlanning(planning: BuildPlanning): string {
   if (planning.pausedBy) lines.push("Paused by: a box stop");
   if (planning.boxId) lines.push(`Box: ${planning.boxId}`);
   if (planning.issue) lines.push(`Issue: ${planning.issue.url}`);
+  const recommendation = planning.recommendation;
+  if (recommendation) {
+    const risk = recommendation.highRisk ? "high-risk" : "not high-risk";
+    lines.push(
+      `Recommended flow: ${buildFlowText(recommendation.flow)} (${risk}). ${recommendation.reason}`,
+    );
+  }
   lines.push("Seat calls:");
   if (planning.calls.length === 0) lines.push("  none");
   for (const c of planning.calls) {
@@ -654,7 +714,7 @@ export function formatPlanning(planning: BuildPlanning): string {
   const latest = planning.frozen.at(-1);
   lines.push(
     latest
-      ? `Frozen plan: version ${latest.version} (${buildFile(planning.repoPath, planning.slug, latest.file)})`
+      ? `Frozen plan: version ${latest.version}, flow ${buildFlowText(latest.flow)} (${buildFile(planning.repoPath, planning.slug, latest.file)})`
       : "Frozen plan: none",
     `Draft plan, once the spec and the design exist: ${buildFile(planning.repoPath, planning.slug, "planning/draft.json")}`,
     `Status file: ${buildFile(planning.repoPath, planning.slug, "STATUS.md")}`,
@@ -681,6 +741,7 @@ export function formatFreeze(answer: BuildFreezeAnswer): string {
   return [
     `Froze build ${planning.slug}'s plan as version ${frozen.version}: ${buildFile(planning.repoPath, planning.slug, frozen.file)}`,
     `Push: ${frozen.push ? "allowed" : "not allowed"}`,
+    `Flow: ${buildFlowText(frozen.flow)}`,
     ...(answer.plan.issue ? [`Issue: ${answer.plan.issue.url}`] : []),
     `Start the build with: aio-build start ${planning.slug}`,
     "",
@@ -798,8 +859,9 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     body = { ...body, meeting: command.meeting, body: input };
   } else if (command.kind === "meeting-end") {
     body = { ...body, meeting: command.meeting };
-  } else if (command.kind === "freeze" && command.push !== null) {
-    body.push = command.push;
+  } else if (command.kind === "freeze") {
+    if (command.push !== null) body.push = command.push;
+    if (command.flow !== null) body.flow = command.flow;
   } else if (command.kind === "start" && command.base !== null) {
     body.base = command.base;
   } else if (command.kind === "messages") {

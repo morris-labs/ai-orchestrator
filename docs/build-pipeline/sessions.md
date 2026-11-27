@@ -62,6 +62,12 @@ turn records the paths it kept with the turn, in `changed`. The task gate doesn'
 attempts of another seat's task, and a task that a turn's escalation paused
 doesn't start its next attempt.
 
+While the build is paused, by a person or by a box stop, a message waits
+in the queue and starts no turn, even after an engine restart. A turn that
+the pause reaches before its vendor call goes back to the queue. When the
+build resumes, the engine delivers each waiting message once. A message
+that waits doesn't keep the build from showing `paused (idle)`.
+
 A resumed turn runs in the account folder that holds the session, even when
 the vendor's default account folder changed or the engine restarted since.
 

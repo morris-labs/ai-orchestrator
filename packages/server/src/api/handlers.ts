@@ -1,10 +1,9 @@
 // One handler per HTTP route in the contracts' `serverRoutes` table. The
 // `HttpHandlers` type makes a missing or extra route a compile error.
+export { HOLD_EDITS_MESSAGE, RELEASE_EDITS_MESSAGE, requireAbsolute } from "./run-start.js";
 import {
   DEFAULT_PROMPT_TEMPLATES,
   boxWorkDir,
-  READ_ONLY_POST_PUSH_MESSAGE,
-  isReadOnlyPostPush,
   type BuildSummary,
   type EngineRouteKey,
   type Finding,
@@ -14,14 +13,18 @@ import {
   type RunTokenSample,
   type ServerRoutes,
 } from "@aio/contracts";
-import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
 import { hasBearer, sessionCookieHeader } from "./auth.js";
 import type { ApiDeps, ApiEngine } from "./deps.js";
 import { ApiError } from "./errors.js";
 import { listDirs } from "./fs-dirs.js";
-import { ulid } from "./ulid.js";
+import {
+  prepareReviewAccounts,
+  requireAbsolute,
+  requireBoxInProject,
+  startRun,
+} from "./run-start.js";
 import { readHostTokenSamples } from "../usage/token-samples.js";
 import { commandLine } from "../jobs/process.js";
 import { controlBuild, resolveBuildEscalation, type BuildAction } from "../events/build-control.js";
@@ -44,14 +47,6 @@ export interface HandlerContext<K extends HttpRouteKey> {
 export type HttpHandlers = {
   [K in HttpRouteKey]: (ctx: HandlerContext<K>) => Promise<z.input<SR[K]["response"]>>;
 };
-
-/** The message a box's interactive session receives when a run starts on its tree. */
-export const HOLD_EDITS_MESSAGE =
-  "A review run has started on this branch. Hold all edits to the working tree until the run finishes; you will get a message when it does.";
-
-/** The message a box's interactive session receives when that run ends. */
-export const RELEASE_EDITS_MESSAGE =
-  "The review run on this branch has ended. You can edit the working tree again.";
 
 /** The run routes that the server forwards to an engine unchanged. */
 const RUN_PROXY_KEYS = [
@@ -83,21 +78,6 @@ function isRunState(value: unknown): value is RunState {
     "container" in value &&
     "request" in value
   );
-}
-
-/**
- * Refuses a relative path. The server's working directory means nothing to
- * the caller, so a client resolves a path against its own before sending it.
- * A `container` path is a POSIX path whatever the host is.
- */
-export function requireAbsolute(
-  value: string | null | undefined,
-  field: string,
-  side: "host" | "container" = "host",
-): void {
-  if (value === null || value === undefined) return;
-  const absolute = side === "host" ? path.isAbsolute(value) : path.posix.isAbsolute(value);
-  if (!absolute) throw new ApiError("validation", `${field} must be an absolute path: ${value}.`);
 }
 
 function requireAbsoluteMounts(mounts: { host: string; container: string }[] | undefined): void {
@@ -133,21 +113,6 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     } catch (err) {
       deps.log?.(`Reading token samples failed: ${(err as Error).message}`);
       return [];
-    }
-  }
-
-  /**
-   * Refuses a run whose box is in another project: the run would hold that
-   * box, and the hold-edits message would go to it.
-   */
-  async function requireBoxInProject(boxId: string | undefined, projectId: string) {
-    if (boxId === undefined) return;
-    const { box } = await core.boxes.get(boxId);
-    if (box.projectId !== projectId) {
-      throw new ApiError(
-        "validation",
-        `Box ${boxId} belongs to project ${box.projectId}, not ${projectId}.`,
-      );
     }
   }
 
@@ -211,15 +176,6 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     );
   }
 
-  async function prepareReviewAccounts(): Promise<void> {
-    const defaults = (await core.settings.get()).accountDefaults;
-    for (const vendor of ["codex", "copilot"] as const) {
-      if (!defaults[vendor]) continue;
-      const { problems } = await core.accounts.prepare({ vendor });
-      for (const problem of problems) deps.log?.(`${vendor}: ${problem}`);
-    }
-  }
-
   function proxyRun<K extends RunProxyKey>(key: K): HttpHandlers[K] {
     return (async (ctx: HandlerContext<K>) => {
       const params = ctx.params as Record<string, string>;
@@ -229,7 +185,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         if (key === "runs.get") return known;
         if (key === "findings.list") return { findings: mirroredFindings(known.id, ctx.query) };
       }
-      if (key === "runs.resume") await prepareReviewAccounts();
+      if (key === "runs.resume") await prepareReviewAccounts(deps);
       const engine = await engineForRun(params.runId as string);
       const result = await engine.call(`engine.${key}` as EngineRouteKey, {
         params,
@@ -595,28 +551,14 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "runs.preview": async ({ body }) => {
       requireAbsolute(body.repoPath, "The repository path", "container");
-      await requireBoxInProject(body.boxId, body.projectId);
+      await requireBoxInProject(core, body.boxId, body.projectId);
       const engine = deps.engines.requireProject(body.projectId);
       return engine.call("engine.runs.preview", {
         body: { ...body, hostTokenSamples: await hostTokenSamples(body.projectId) },
       }) as never;
     },
     "runs.create": async ({ body, reply }) => {
-      // The request schema refuses this too; the check here keeps the refusal if the schema changes.
-      if (isReadOnlyPostPush(body)) throw new ApiError("validation", READ_ONLY_POST_PUSH_MESSAGE);
-      requireAbsolute(body.repoPath, "The repository path", "container");
-      await requireBoxInProject(body.boxId, body.projectId);
-      await prepareReviewAccounts();
-      const engine = deps.engines.requireProject(body.projectId);
-      // An older engine drops request fields it doesn't know, such as
-      // `concurrency`, so the server forwards a run only to an engine whose
-      // version it has confirmed.
-      await engine.confirmVersion();
-      const run = (await engine.call("engine.runs.create", {
-        body: { ...body, runId: ulid() },
-      })) as RunState;
-      deps.runs.upsert(run);
-      if (body.boxId !== undefined) deps.sessionMessages.send(body.boxId, HOLD_EDITS_MESSAGE);
+      const run = await startRun(deps, body);
       reply.code(201);
       return run;
     },

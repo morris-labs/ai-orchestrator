@@ -1831,12 +1831,27 @@ export async function runFix(
       };
       const build = ctx.state.request.build;
       // A build's fixer is its seat's agent: the seat's vendor, tier, and
-      // effort, and a fresh session for every batch.
+      // effort, and a fresh session for every batch, unless the build names
+      // the seat's session for every batch to resume.
+      const session = build?.fixer.session;
       const out = await ctx.callAgent<FixOutput>(
         build
           ? placeCall(
-              { ...call, seat: build.fixer.placement.seat, step: "review" },
-              { ...build.fixer.placement, fresh: true },
+              {
+                ...call,
+                request: {
+                  ...call.request,
+                  ...(session
+                    ? {
+                        sessionId: session.id,
+                        ...(session.folder !== undefined ? { sessionFolder: session.folder } : {}),
+                      }
+                    : {}),
+                },
+                seat: build.fixer.placement.seat,
+                step: "review",
+              },
+              { ...build.fixer.placement, fresh: session === undefined },
             )
           : {
               ...call,

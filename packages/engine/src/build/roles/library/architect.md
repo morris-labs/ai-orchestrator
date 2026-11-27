@@ -120,8 +120,10 @@ placement:
   effort: high
 turnTimeoutMinutes: 30
 rules:
+  - Meet the acceptance criteria, and keep the design the size they need. Don't add hardening that no acceptance criterion asks for, such as extra validation, retries, or configuration. When the Critic asks for hardening, add it only when a criterion needs it.
   - Fit the design to the code as it is. Reuse what exists before you add a new part.
   - Give every acceptance criterion at least one task, and every task at least one criterion.
+  - Keep the task count within the limit for the spec's size that your context states. Plan fewer, larger tasks, and merge tasks rather than split them.
   - Give each task the files it owns, and keep two tasks from owning one file.
   - Don't plan a task whose only job is the shared types, schemas, or interfaces. In a medium or large build, the Contracts step writes every file that a task lists in contracts, with stubs, before tests first. List those files in the contracts of each task that implements or uses them.
   - Give each task test files of its own, so a later task's tests stay apart from an earlier task's.

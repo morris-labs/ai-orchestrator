@@ -1,12 +1,13 @@
 // Planning through the engine build API: the Project manager calls the
 // Analyst and the Architect, freezes the build plan, and starts the build
 // from it, with the mock vendor CLIs.
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BuildPlanSchema,
   BuildPlanningSchema,
+  type BuildFlow,
   type BuildPlanInput,
   type BuildSeatRequestInput,
 } from "@aio/contracts";
@@ -27,6 +28,11 @@ const SPEC = {
   usageEstimate: { low: 100_000, high: 400_000 },
   secrets: [],
   services: [],
+  recommendation: {
+    flow: "single_session",
+    highRisk: false,
+    reason: "The change stays in the cart module and touches no stored data.",
+  },
 };
 
 /** What the Architect answers: the design. */
@@ -58,8 +64,9 @@ function seat(seatName: string, extra: Partial<BuildSeatRequestInput> = {}) {
   };
 }
 
-function freeze(extra: { plan?: Record<string, unknown>; push?: boolean } = {}) {
-  return { projectId: PROJECT_ID, boxId: "box-1", slug: SLUG, ...extra };
+/** A freeze request. The owner's flow choice is `pipeline` unless `extra` sets `flow`, even to `undefined`. */
+function freeze(extra: { plan?: Record<string, unknown>; push?: boolean; flow?: BuildFlow } = {}) {
+  return { projectId: PROJECT_ID, boxId: "box-1", slug: SLUG, flow: "pipeline" as const, ...extra };
 }
 
 /** A world whose repository has the `node-dev` specialty and the project's test commands in its policy. */
@@ -398,5 +405,243 @@ describe("starting a frozen build", () => {
       code: "conflict",
     });
     await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({ code: "conflict" });
+  });
+});
+
+describe("the recommended flow", () => {
+  it("records the Analyst's recommendation in the planning record, the status file, and the draft", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.recommendation).toEqual(SPEC.recommendation);
+    const status = world.file(SLUG, "STATUS.md");
+    expect(status).toContain("Recommended flow: single session");
+    expect(status).toContain("not high-risk");
+    expect(status).toContain(SPEC.recommendation.reason);
+    const draft = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "planning/draft.json")));
+    expect(draft.recommendation).toEqual(SPEC.recommendation);
+    expect(draft.flow).toBeNull();
+    // The Analyst hears the size threshold and what counts as high-risk.
+    const analystPrompt = world.calls().find((c) => c.prompt.includes("You are the Analyst"));
+    expect(analystPrompt?.prompt).toContain("single_session");
+    expect(analystPrompt?.prompt).toMatch(/migration/);
+  });
+
+  it("fails an Analyst answer whose recommendation breaks the size threshold", async () => {
+    const world = await planningWorld();
+    world.script({
+      claude: [
+        {
+          match: "You are the Analyst",
+          output: {
+            ...SPEC,
+            size: "medium",
+            recommendation: { flow: "pipeline", highRisk: false, reason: "It is medium." },
+          },
+        },
+      ],
+    });
+    await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/recommendation/),
+    });
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.recommendation).toBeNull();
+  });
+
+  it("refuses a freeze without the owner's flow choice and names the recommendation", async () => {
+    const world = await planningWorld();
+    await plan(world);
+    await expect(
+      world.manager.freeze(freeze({ push: true, flow: undefined })),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/ask the owner.*single session.*--flow/is),
+    });
+    expect(JSON.parse(world.file(SLUG, "planning.json")).frozen).toEqual([]);
+  });
+
+  it("records the owner's override of the recommendation and runs a pipeline build", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const answer = await world.manager.freeze(freeze({ push: false, flow: "pipeline" }));
+    expect(answer.frozen.flow).toBe("pipeline");
+    expect(answer.plan).toMatchObject({ flow: "pipeline", recommendation: SPEC.recommendation });
+    expect(world.file(SLUG, "STATUS.md")).toMatch(/Version 1:.*Flow: pipeline/);
+
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    await world.settle(SLUG);
+    expect(BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "plan.json"))).flow).toBe("pipeline");
+    const status = world.file(SLUG, "STATUS.md");
+    expect(status).toContain("- Flow: pipeline");
+    expect(status).toContain("Recommended flow: single session");
+  });
+
+  it("records a single-session choice and starts the build in that flow", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const answer = await world.manager.freeze(freeze({ push: false, flow: "single_session" }));
+    expect(answer.frozen.flow).toBe("single_session");
+    expect(answer.plan.flow).toBe("single_session");
+    expect(world.file(SLUG, "STATUS.md")).toMatch(/Version 1:.*Flow: single session/);
+
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
+    });
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    const state = await world.settle(SLUG);
+    // The single-session flow skips the Contracts step and tests first.
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    expect(state.tasks).toEqual([expect.objectContaining({ id: "T1", status: "done" })]);
+    const steps = world.events
+      .ofType("build.changed")
+      .filter((e) => e.build.id === state.id)
+      .map((e) => e.build.step);
+    expect(steps).not.toContain("contracts");
+    expect(steps).not.toContain("tests_first");
+    expect(world.file(SLUG, "STATUS.md")).toContain("- Flow: single session");
+  });
+});
+
+describe("planning state from 3.3", () => {
+  /**
+   * Rewrites the Analyst's saved answer and the planning record to their 3.3
+   * shapes: a spec without `recommendation` or `questions`, and a record
+   * without the fields that came with them.
+   */
+  function toV33(world: BuildWorld): void {
+    const recordPath = join(world.dir(SLUG), "planning.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown> & {
+      calls: { seat: string; file: string }[];
+    };
+    const callPath = join(world.dir(SLUG), record.calls.find((c) => c.seat === "analyst")!.file);
+    const call = JSON.parse(readFileSync(callPath, "utf8")) as { answer: Record<string, unknown> };
+    delete call.answer.recommendation;
+    delete call.answer.questions;
+    writeFileSync(callPath, JSON.stringify(call, null, 2));
+    delete record.recommendation;
+    delete record.questions;
+    writeFileSync(recordPath, JSON.stringify(record, null, 2));
+  }
+
+  it("uses an Analyst spec saved before the recommendation existed", async () => {
+    const world = await planningWorld();
+    await world.manager.plan(seat("analyst"));
+    toV33(world);
+    await world.restart();
+
+    await world.manager.plan(seat("architect"));
+    const architectPrompt = world.calls().find((c) => c.prompt.includes("You are the Architect"));
+    expect(architectPrompt?.prompt).toContain(SPEC.criteria[0]?.text);
+    const draft = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "planning/draft.json")));
+    expect(draft).toMatchObject({ title: SPEC.title, size: "small", recommendation: null });
+
+    const answer = await world.manager.freeze(freeze({ push: true }));
+    expect(answer.plan).toMatchObject({ title: SPEC.title, flow: "pipeline" });
+  });
+
+  it("still refuses an Analyst answer without a recommendation", async () => {
+    const world = await planningWorld();
+    const { recommendation: _recommendation, ...old } = SPEC;
+    world.script({ claude: [{ match: "You are the Analyst", output: old }] });
+    await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/recommendation/),
+    });
+  });
+});
+
+describe("default planning answers", () => {
+  /** A question whose answer leaves the criteria alone, and one whose answer changes AC1. */
+  const QUESTIONS = [
+    {
+      question: "Which currency does the total use?",
+      recommendedAnswer: "The prices' own unit, with no conversion.",
+      changesCriterion: false,
+    },
+    {
+      question: "Does the total include tax?",
+      recommendedAnswer: "No: the cart sums the item prices only.",
+      changesCriterion: true,
+    },
+  ];
+
+  async function questionsWorld(): Promise<BuildWorld> {
+    const world = await planningWorld();
+    world.script({
+      claude: [
+        { match: "You are the Analyst", output: { ...SPEC, questions: QUESTIONS } },
+        { match: "You are the Architect", output: DESIGN },
+        { match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } },
+      ],
+    });
+    return world;
+  }
+
+  it("defaults the answers that change no criterion and leaves the rest for the owner", async () => {
+    const world = await questionsWorld();
+    await plan(world);
+
+    const draft = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "planning/draft.json")));
+    expect(draft.defaultedAnswers).toEqual([
+      { question: QUESTIONS[0]!.question, answer: QUESTIONS[0]!.recommendedAnswer },
+    ]);
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.questions).toEqual(QUESTIONS);
+    const status = world.file(SLUG, "STATUS.md");
+    expect(status).toMatch(
+      /## Questions for the owner\n\n.*\n\n- Does the total include tax\? Recommended: No: the cart sums/,
+    );
+    expect(status).toMatch(
+      /## Defaulted answers\n\n.*\n\n- Which currency does the total use\? Defaulted to: The prices' own unit/,
+    );
+    // The Analyst hears that each question needs a recommended answer and a criterion flag.
+    const analystPrompt = world.calls().find((c) => c.prompt.includes("You are the Analyst"));
+    expect(analystPrompt?.prompt).toContain("recommendedAnswer");
+    expect(analystPrompt?.prompt).toContain("changesCriterion");
+  });
+
+  it("keeps the defaulted answers in the frozen plan that the build runs", async () => {
+    const world = await questionsWorld();
+    await plan(world);
+    await world.manager.freeze(freeze({ push: false }));
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    await world.settle(SLUG);
+
+    const frozen = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "plan.json")));
+    expect(frozen.defaultedAnswers).toEqual([
+      { question: QUESTIONS[0]!.question, answer: QUESTIONS[0]!.recommendedAnswer },
+    ]);
+  });
+
+  it("drafts no defaulted answers from a spec without questions", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const draft = JSON.parse(world.file(SLUG, "planning/draft.json")) as Record<string, unknown>;
+    expect(draft).not.toHaveProperty("defaultedAnswers");
+    expect(world.file(SLUG, "STATUS.md")).not.toContain("Questions for the owner");
+  });
+
+  it("fails an Analyst answer with a question that lacks a recommended answer", async () => {
+    const world = await planningWorld();
+    world.script({
+      claude: [
+        {
+          match: "You are the Analyst",
+          output: {
+            ...SPEC,
+            questions: [{ question: "Which currency?", changesCriterion: false }],
+          },
+        },
+      ],
+    });
+    await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/questions\.0\.recommendedAnswer/),
+    });
   });
 });

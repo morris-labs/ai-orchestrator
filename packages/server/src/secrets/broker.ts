@@ -13,6 +13,11 @@
 // requires the bearer token it writes to `broker.token` in the same mounted
 // directory. Any process on the host can connect to a loopback port, so the
 // token, not the port, identifies the container. See `docs/secrets.md`.
+//
+// With a review source, the broker also lets a box start a review run of
+// its own branch and read its result (`BROKER_ROUTES.reviewStart` and
+// `reviewRuns`). The socket or token gives the project; the source checks
+// the box and the branch.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -28,8 +33,10 @@ import {
   BrokerErrorCodeSchema,
   brokerTcpUrl,
   BrokerReadRequestSchema,
+  BrokerReviewStartRequestSchema,
   type BrokerErrorCode,
 } from "@aio/contracts";
+import type { BoxReview } from "../api/box-review.js";
 import { ApiError, STATUS_BY_CODE, toApiError } from "../api/errors.js";
 
 /** Where the broker gets names and values for a project. */
@@ -63,6 +70,8 @@ export interface BrokerOpenOptions {
 
 export interface SecretsBrokerOptions {
   source: BrokerSource;
+  /** Serves a box's review requests. Absent means the broker has no review routes. */
+  review?: BoxReview;
   /** The host directory that holds a container's socket. */
   dirFor: (container: string) => string;
   log: (message: string) => void;
@@ -409,6 +418,26 @@ export class SecretsBroker {
         caller = body.caller ?? "";
         const values = await this.opts.source.read(target.projectId, names);
         send(res, 200, { values });
+      } else if (this.opts.review && req.method === "POST" && route === BROKER_ROUTES.reviewStart) {
+        kind = "review start";
+        const body = BrokerReviewStartRequestSchema.parse(JSON.parse(await readBody(req)));
+        caller = `box ${body.boxId}${body.branch ? ` branch ${body.branch}` : ""}`;
+        const run = await this.opts.review.start(target.projectId, body);
+        caller += ` run ${run.id}`;
+        send(res, 201, run);
+      } else if (
+        this.opts.review &&
+        req.method === "GET" &&
+        route?.startsWith(`${BROKER_ROUTES.reviewRuns}/`)
+      ) {
+        kind = "review run";
+        const runId = decodeURIComponent(route.slice(BROKER_ROUTES.reviewRuns.length + 1));
+        const boxId = new URL(req.url ?? "", "http://broker").searchParams.get("boxId") ?? "";
+        caller = `box ${boxId} run ${runId}`;
+        if (runId === "" || runId.includes("/") || boxId === "") {
+          throw new ApiError("validation", "Name a run ID in the path and a boxId in the query.");
+        }
+        send(res, 200, await this.opts.review.get(target.projectId, boxId, runId));
       } else {
         throw new ApiError("not_found", `The secrets broker has no route ${kind}.`);
       }
