@@ -1,4 +1,4 @@
-// A build plan with three tasks (spec #55, ticket #69): tests first writes
+// A medium build plan with three tasks (spec #55, ticket #69): tests first writes
 // every task's tests red, and the engine runs the tasks one at a time in
 // dependency order against the real server and engine. Each task gate runs
 // the whole test suite with the later tasks' tests set aside, plus the
@@ -115,6 +115,19 @@ const TEST_ENGINEER = {
   ),
 };
 
+/** The coverage check, run on another vendor, finds every criterion checked. */
+const COVERAGE_CHECK = {
+  match: "Coverage check",
+  output: {
+    summary: "Read each criterion.",
+    criteria: TESTS.map((t) => ({
+      id: t.id,
+      checked: true,
+      reason: `The ${t.module} test asserts it.`,
+    })),
+  },
+};
+
 const developer = (id: keyof typeof DONE, criterion: string) => ({
   match: `Task ${id}:`,
   times: 1,
@@ -135,8 +148,8 @@ const task = (id: string, criterion: string, module: string, dependsOn: string[]
 /** The plan lists the tasks out of order; checkout needs shipping, which needs tax. */
 const PLAN = {
   title: "Checkout with tax and shipping",
-  // A small build skips the coverage check.
-  size: "small",
+  // A medium build runs the coverage check and the Contracts step.
+  size: "medium",
   criteria: TESTS.map((t) => ({ id: t.id, text: `${t.name}.` })),
   tasks: [
     task("T3", "AC3", "checkout", ["T2"]),
@@ -174,6 +187,7 @@ beforeAll(async () => {
         codex: { responses: [TEST_ENGINEER, ...fallback.responses] },
         claude: {
           responses: [
+            COVERAGE_CHECK,
             developer("T1", "AC1"),
             developer("T2", "AC2"),
             developer("T3", "AC3"),
