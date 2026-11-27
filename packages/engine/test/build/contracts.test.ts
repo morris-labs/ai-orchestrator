@@ -114,7 +114,11 @@ describe("the Contracts step", () => {
   it("skips a small build and a plan without contract files", async () => {
     const world = await buildWorld({ steps: STEPS });
 
-    await world.start("small", discountPlan({ size: "small" }));
+    // A small build has one task, so its one task lists the contract file.
+    await world.start(
+      "small",
+      cartPlan({ tasks: [{ ...cartPlan().tasks[0]!, contracts: [DISCOUNT] }] }),
+    );
     await world.start("none", cartPlan({ size: "medium" }));
     const small = await world.settle("small");
     const none = await world.settle("none");

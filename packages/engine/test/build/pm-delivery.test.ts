@@ -107,6 +107,7 @@ function addLabel(world: BuildWorld): void {
 function twoMilestonePlan() {
   return cartPlan({
     title: "Cart total and label",
+    size: "medium",
     criteria: [
       { id: "AC1", text: "The cart reports the sum of its item prices." },
       { id: "AC2", text: "An item label names the item." },

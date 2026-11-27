@@ -3,8 +3,10 @@ import {
   BUILD_SOCKET_ROUTES,
   BuildMeetingRequestSchema,
   BuildPlanningSchema,
+  MEETING_ROUND_CAP,
   MeetingReplySchema,
   majorObjections,
+  meetingRoundCap,
 } from "../src/index.js";
 
 const reply = {
@@ -54,14 +56,22 @@ describe("meeting replies", () => {
 });
 
 describe("meeting requests", () => {
-  it("defaults to the Architect proposing to the Critic for at most three rounds", () => {
+  it("defaults to the Architect proposing to the Critic, with no round cap of its own", () => {
     const request = BuildMeetingRequestSchema.parse({
       projectId: "proj-1",
       boxId: null,
       slug: "cart-total",
       brief: "Attack the design.",
     });
-    expect(request).toMatchObject({ proposer: "architect", members: ["critic"], rounds: 3 });
+    expect(request).toMatchObject({ proposer: "architect", members: ["critic"] });
+    expect(request.rounds).toBeUndefined();
+  });
+
+  it("caps a small or medium build's meeting at one round and a large build's at three", () => {
+    expect(meetingRoundCap("small")).toBe(1);
+    expect(meetingRoundCap("medium")).toBe(1);
+    expect(meetingRoundCap("large")).toBe(MEETING_ROUND_CAP);
+    expect(meetingRoundCap(undefined)).toBe(MEETING_ROUND_CAP);
   });
 
   it("refuses a proposer among the members", () => {

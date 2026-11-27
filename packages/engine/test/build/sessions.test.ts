@@ -382,9 +382,13 @@ describe("session resume", () => {
     const state = await world.settle("cart-turns");
 
     expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 2 });
-    const attempts = world.jsonFiles("cart-turns", "tasks/T1") as {
-      gate: { permission: { outside: string[] } };
-    }[];
+    const attempts = (
+      world.jsonFiles("cart-turns", "tasks/T1") as {
+        attempt?: number;
+        gate: { permission: { outside: string[] } };
+      }[]
+    ).filter((file) => file.attempt !== undefined);
+    expect(attempts).toHaveLength(2);
     for (const attempt of attempts) expect(attempt.gate.permission.outside).toEqual([]);
     // The Test engineer's file stays, and the registry records it with the turn.
     expect(world.git(world.root, "show", `build/cart-turns:${note}`)).toBe(
