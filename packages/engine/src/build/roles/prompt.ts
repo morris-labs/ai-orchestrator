@@ -31,6 +31,11 @@ export interface RoleTask {
   teamChat?: boolean;
   /** Extra context that the engine attaches, such as a diagnosis or gate output. */
   context?: string;
+  /**
+   * The task's context pack, from `taskPack()`: the plan excerpt, the
+   * criteria, and the contract and owned files' contents.
+   */
+  pack?: string;
   /** The owner's decisions attached to the task, as `decisionsText()` writes them. */
   decisions?: string;
   /**
@@ -124,6 +129,7 @@ export function rolePrompt(role: RoleDefinition, task: RoleTask): string {
     ),
     section("Tests that must pass", list(task.tests)),
     section("Depends on", list((task.dependsOn ?? []).map((t) => `${t.id}: ${t.title}`))),
+    section("Context pack", task.pack ?? ""),
     section("Owner decisions", task.decisions ?? ""),
     section("Context", task.context ?? ""),
     section("Team chat", task.teamChat ? TEAM_CHAT_GUIDANCE : ""),

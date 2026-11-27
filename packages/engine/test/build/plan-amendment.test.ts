@@ -142,6 +142,11 @@ describe("a mid-build plan amendment of a task's owned files", () => {
         .slice(before)
         .find((c) => c.prompt.includes("Task T1") && c.prompt.includes("attempt 5 of"));
       expect(retried?.prompt).toMatch(/## Owned files\n\n[^#]*src\/format\.mjs/);
+      // The amendment gives the retry a fresh context pack that names the file.
+      const packOf = (prompt = "") => /## Context pack\n[\s\S]*?(?=\n## |$)/.exec(prompt)?.[0];
+      const first = world.calls().find((c) => c.prompt.includes("attempt 1 of"));
+      expect(packOf(first?.prompt)).not.toContain("src/format.mjs");
+      expect(packOf(retried?.prompt)).toContain("`src/format.mjs`: doesn't exist yet");
       // Only a clarification's note reaches the Developer.
       if (request.action === "clarify") expect(retried?.prompt).toContain(request.note);
       expect(world.git(world.root, "show", "build/cart-price:src/format.mjs")).toBe(FORMAT.trim());
