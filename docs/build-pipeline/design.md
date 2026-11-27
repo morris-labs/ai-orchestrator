@@ -88,13 +88,19 @@ owner can make.
 ## Build size
 
 The Analyst estimates a build size, and the owner can change it. The size
-sets the seats, as the following table shows:
+sets the planning seats, the Critic meeting's round cap, and the task limit,
+as the following table shows:
 
-| Size | Example | Planning | Execution |
+| Size | Example | Planning | Task limit |
 |---|---|---|---|
-| Small | A bug fix | The Project manager writes the spec and plan itself. No Critic. | One Developer |
-| Medium | A settings page | The full planning team, with one Critic meeting | Up to three Developers in parallel |
-| Large | A new app | The full planning team, with a Critic meeting for each milestone plan | The release train by default, with the Integrator on call |
+| Small | A bug fix | The Project manager writes the spec and plan itself. No Critic. | One task |
+| Medium | A settings page | The full planning team, with a Critic meeting of one round | Five tasks |
+| Large | A new app | The full planning team, with a Critic meeting of up to three rounds | No limit |
+
+Tasks run one at a time, in dependency order, at every size. The design
+plans parallel Developers for medium builds and the release train for large
+ones, but each joins only when a measurement shows a gap that it closes; see
+[Delivery phases](#delivery-phases).
 
 ### Flow
 
@@ -104,6 +110,10 @@ run, and a fix pass in the same session. A large task or a high-risk one
 gets the pipeline. A task is high-risk when it changes stored data, runs a
 migration, or crosses an account or security boundary across several
 packages. The engine refuses a spec whose recommendation breaks this rule.
+
+This rule is the size threshold: in the T1 and T2 measurements, the
+pipeline didn't pay off below it. For the reasons, see the
+`docs/adr/0008-route-builds-by-size-to-a-single-session.md` file.
 
 The Project manager shows the recommendation to the owner before planning
 goes further. The owner can choose either flow, and the freeze records the
@@ -334,7 +344,7 @@ session, so the agent doesn't rediscover the code. Three rules apply:
 The app filters the messages by task, milestone, and seat. A slice is the set
 of messages that one agent received, and the owner can view each agent's
 slice. Channels and side chats, which group messages into threads with
-several members, are a phase 2 addition.
+several members, join only when a measurement shows a gap that they close.
 
 ### Meetings
 
@@ -418,7 +428,7 @@ Each milestone runs these steps in order:
    contract tests from the criteria and the contracts. The engine checks the
    tests and locks them.
 3. **Tasks.** Developers work tasks from the task graph in dependency order,
-   each in its own Git worktree. Each Developer gets a context pack that code
+   one at a time, in the build worktree. Each Developer gets a context pack that code
    assembles from the task: its owned files, contracts, criteria, and its
    excerpt of the build plan. See [Context pack](#context-pack).
 4. **Integrate.** The engine merges task branches in dependency order and runs
@@ -433,12 +443,20 @@ Each milestone runs these steps in order:
 8. **Release ready.** In release train mode, the milestone goes to the
    post-push loop. In single PR mode, the next milestone starts.
 
+The engine runs the Contracts, Tests first, Tasks, Review, and Release
+ready steps, after preflight. The Integrate, Harden, and Simplify steps
+join only when a measurement shows a gap that they close; see
+[Delivery phases](#delivery-phases). A single-session build runs fewer
+steps still; see [Flow](#flow).
+
 The review pipeline runs once for each pull request. In release train mode,
 it runs on each milestone diff. In single PR mode, it runs one time, on the
 whole build diff after the last milestone, and the earlier milestones end
 with the full suite.
 
-The build size sets which steps run, as the following table shows:
+The build size sets which steps run, as the following table shows. The
+Integrate, Harden, and Simplify rows show the design for when those steps
+join:
 
 | Step | Small | Medium | Large |
 |---|---|---|---|
@@ -532,9 +550,11 @@ following:
 - The tests that must pass.
 - Its dependencies.
 
-The Architect sizes a task for about one focused agent session and splits
-anything larger. The default cap is three parallel Developers, and the build
-plan can raise it.
+Each task costs a cold Developer start, so the Architect plans fewer,
+larger tasks within the build size's task limit, and merges tasks rather
+than splits them. Tasks run one at a time; parallel Developers, with a
+default cap of three that the build plan can raise, join only when a
+measurement shows a gap that they close.
 
 The Architect predicts each owned file set from the code that exists, and a
 prediction is often incomplete. The engine enforces the sets and repairs
@@ -616,6 +636,8 @@ attempts, the task escalates.
 
 Inside a build, the review pipeline's stages run unchanged. The fixer runs
 with the Developer seat's placement and the task context, as a fresh agent.
+In the single-session flow, the fixer resumes the Developer's session
+instead.
 A finding that needs a plan change, such as a contract flaw, goes to the
 Project manager instead. The Project manager either sends it to the build
 team, or works it through in a planning meeting first.
@@ -655,6 +677,10 @@ A milestone or build is release ready when all of the following hold:
   build opts in, and it never blocks.
 - The docs, the changelog entry, the version bump, and the pull request
   description are written, with owner checks listed.
+
+A single-session build has no locked tests and no Scribe, so it skips the
+criteria trace and the written record. Its pull request lists the criteria
+as the plan states them.
 
 The pipeline never merges. After the owner merges, the Project manager tags
 and releases with the `release-versioning` skill, but only when the owner
@@ -716,7 +742,14 @@ The Project manager's session can run for days and compact many times, so it
 doesn't hold the build in its context. The engine keeps the build's state in
 a `STATUS.md` file in the `.aio/builds/SLUG/` directory, and the `aio-build`
 skill has the Project manager reread that file and the build plan after a
-compaction or a restart. Every escalation and digest is also a file. When the
+compaction or a restart. At each milestone end, the engine also writes a
+Project manager hand-off: the plan state, the open escalations, the owner's
+decisions, the defaulted answers, and the usage to date. The server clears
+the session before it delivers the hand-off, so each milestone starts a
+fresh Project manager session from that file, and the session's context
+doesn't grow with the build. For details, see
+[The Project manager hand-off](pm-delivery.md#the-project-manager-hand-off).
+Every escalation and digest is also a file. When the
 session doesn't wake on a message, the escalation waits in the Builds area,
 and the app notifies the owner.
 
@@ -768,14 +801,17 @@ of one machine and doesn't combine machines.
 
 Alerts go to the desktop and to the Project manager. The owner tells the
 Project manager to pause or continue. Nothing pauses on its own, except when a
-vendor actually hits its limit, in which case the engine waits for the reset.
+vendor actually hits its limit, in which case the engine waits for the reset,
+or moves a review role off a quota with no reset time; see
+[Limits and usage](#limits-and-usage).
 The Project manager's milestone digests report the usage each milestone
 spent.
 
 The engine attributes usage to each seat and each milestone loop step, so the
 owner can see which seats earn their cost. The Analyst's size estimate
 includes an expected usage range, and the watcher alerts when a build's
-corrected usage passes twice the high end of that range.
+corrected usage passes twice the high end of that range, a factor that the
+owner can change.
 
 A build's corrected usage is the tokens in of its agent calls: planning,
 every step, and its review runs. The Claude and Codex adapters record only a
@@ -810,8 +846,9 @@ whole app.
 
 ## Delivery phases
 
-The pipeline ships in two phases, so that evidence from real builds decides
-what the default flow includes.
+The pipeline ships in phases, so that evidence from real builds decides
+what the default flow includes. For the reasons, see the
+`docs/adr/0006-ship-in-phases-and-add-seats-by-evidence.md` file.
 
 ### Phase 1
 
@@ -824,7 +861,7 @@ on quality:
 - Tasks that run one at a time, in dependency order.
 - Tests first on a different vendor from the Developer, with the red check,
   the coverage check, the test lock, and test disputes.
-- Preflight, the task gate, and the Debugger.
+- Preflight, the Contracts step, the task gate, and the Debugger.
 - One review pipeline run for each pull request, in single PR mode.
 - Messages as files, with direct addressing, owner posts, and session resume.
 - Escalations.
@@ -835,28 +872,85 @@ on quality:
 
 ### Measurement
 
-After phase 1 works, run the same three tasks two ways: through the build
+After phase 1 worked, the measurement ran tasks two ways: through the build
 pipeline, and through a baseline of one top-tier Claude Code session followed
-by the review pipeline. Use one bug fix and two medium builds. Compare the
-following:
+by one review run. It compared the following:
 
 - The usage, in total and by seat.
 - The confirmed findings in the final review.
 - The acceptance criteria that the result meets.
-- The corrections that the owner asks for after the pull request.
+- The owner interventions.
+
+The pipeline didn't beat the baseline. On T1, a small bug fix, it used about
+0.9 times the baseline's tokens in and took twice the working time. On T2, a
+medium feature, it used about 4.3 times the baseline's tokens in, about 3
+times without the usage that engine defects caused, and needed five owner
+interventions against one. Both arms ended with equal final review results.
+Half of T2's tokens went to the Project manager, and each of its 10 tasks
+paid for a cold Developer start.
 
 ### Phase 2
 
-Each of the following joins the default flow only when the measurements show
+Phase 2 makes the pipeline reliable, then cheaper, then sends each task to
+the cheaper flow when the pipeline doesn't pay off, and asks less of the
+owner. It ships the following:
+
+- **Reliability:** engine tests that drive whole builds through each
+  escalation path that T2 hit, and a medium build that must finish without
+  an engine-defect escalation. A failed or stopped Codex call records its
+  usage, and a paused build starts no message turn. An engine defect pauses
+  the build and goes to a separate session through an engine defect note;
+  see [Escalations](#escalations).
+- **Cost:** the Project manager hand-off at each milestone end, and reading
+  rules that keep the Project manager on digests and escalation files; see
+  [Boxes and lifecycle](#boxes-and-lifecycle). The task limit by build size,
+  the context pack for each Developer call, a Critic round cap from the
+  build size, and an Architect rule to meet the acceptance criteria without
+  extra hardening; see [Build size](#build-size) and
+  [Context pack](#context-pack).
+- **When to use the pipeline:** the Analyst's flow recommendation, the size
+  threshold, and the single-session flow, which the owner chooses at the
+  freeze; see [Flow](#flow).
+- **Owner load:** default planning answers; the quota fallback in a build's
+  review run, see [Limits and usage](#limits-and-usage); the usage estimate
+  that learns from finished builds, with an alert on corrected usage, see
+  [Usage watcher](#usage-watcher); and the `aio-box-review` command, with
+  which a box starts a review run of its own branch.
+
+### Remeasurement
+
+The phase 2 cuts overlap, and no measurement covers them. A
+remeasurement decides the default flow for each build size: it reruns T2,
+runs a second medium task and one large task, and runs the baseline beside
+each. The pipeline passes a task when it meets all of the following:
+
+- At most 1.5 times the baseline's tokens in, review included.
+- No more confirmed findings than the baseline at each severity in the
+  final review run.
+- At least as many acceptance criteria met.
+- No engine-defect escalation and no engine reinstall.
+- At most one more owner intervention than the baseline.
+
+If the pipeline passes the large task but not the medium ones, the size
+threshold stays, and the pipeline stays the default for large tasks only.
+If it fails the large task too, the single-session flow becomes the default
+for every size, and the parts of the pipeline that helped, such as the
+criteria trace and the test lock, move into it. Until the remeasurement
+reports, the size threshold in [Flow](#flow) sets the recommendation.
+
+### Later additions
+
+Each of the following joins the default flow only when a measurement shows
 a gap that it closes:
 
-- Parallel Developers, with owned file set enforcement.
-- The Harden and Simplify steps.
+- Parallel Developers, with a worktree for each task.
+- The Harden and Simplify steps, and the Integrate step that parallel
+  Developers need.
 - A review pipeline run for each milestone in single PR mode.
 - The bench roles, and the on-call roles other than the Debugger.
 - The Librarian as a seat during execution.
 - Channels and side chats.
-- The release train, and with it large builds.
+- The release train.
 - The memory sink.
 
 ## Fit with AI Orchestrator
@@ -889,8 +983,8 @@ beside the `.aio/runs/` directory. Replace `PROJECT_ROOT` with the project's
 primary checkout. Role overrides in the `.aio/team/` directory are local,
 because Git ignores the `.aio/` directory.
 
-In phase 1, a build works in one build worktree under the `.worktrees/`
-directory. Tasks, the task gate, and the review run all use that worktree,
+A build works in one build worktree under the `.worktrees/` directory.
+Tasks, the task gate, and the review run all use that worktree,
 and the Project manager's own checkout stays untouched. A worktree for each
 task arrives with parallel Developers.
 
@@ -905,7 +999,7 @@ a build escalation. A Copilot review is an option of every review run, in a
 build or stand-alone, and no run requires one.
 
 Review lenses need a focus-area option in the review pipeline. That option
-arrives in phase 2, with the roles that use it.
+arrives with the roles that use it.
 
 ### Team chat
 

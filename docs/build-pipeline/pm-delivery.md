@@ -177,8 +177,10 @@ server clears the session first:
 When the transcript holds the hand-off's marker already, the server
 neither clears the session nor types the pointer. The server types nothing
 into a Codex or GitHub Copilot session, so it clears neither: the hand-off
-waits in the inbox, like every other item for such a session. The server types the text, waits, and sends
-Enter in a separate call. The item counts as delivered once the session's
+waits in the inbox, like every other item for such a session.
+
+For every pointer, the server types the text, waits, and sends Enter in a
+separate call. The item counts as delivered once the session's
 transcript shows its marker. When the transcript holds the marker already,
 the server marks the item delivered without typing it again.
 

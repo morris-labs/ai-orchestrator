@@ -77,6 +77,13 @@ What one round of a review run looks at: its change base, its tip, and the
 files that changed between them.
 _Avoid_: Range (on its own), diff
 
+**Quota fallback**:
+The move of a review role to the next vendor that the run's profile
+allows, when the role's vendor reports a quota with no reset time. The run
+records it as a `role.reassigned` event with the vendor that lost the role
+and the reason. A limit with a reset time waits for the reset instead.
+_Avoid_: Failover, vendor switch
+
 ## Build pipeline
 
 The build pipeline takes a request from planning to a release-ready pull
@@ -184,6 +191,25 @@ The approved, versioned record of what a build delivers and how: the spec,
 acceptance criteria, architecture, contracts, milestones, and task graph.
 _Avoid_: Spec, PRD, ticket
 
+**Build size**:
+The Analyst's estimate of how big a build is, small, medium, or large,
+which the owner can change. It sets the planning seats, the Critic
+meeting's round cap, the task limit, and the recommended flow.
+_Avoid_: Scope, tier (for the size)
+
+**Task limit**:
+The most tasks that a build plan of a size can have: one for a small build,
+five for a medium build, and no limit for a large build. The plan check
+enforces it at a freeze and at a start. The Contracts step doesn't count.
+_Avoid_: Task cap, task budget
+
+**Size threshold**:
+The rule that sends a small or medium task that isn't high-risk to the
+single-session flow, and a large or high-risk task to the pipeline. The
+Analyst's recommendation must follow it, and the owner can override the
+recommendation.
+_Avoid_: Cutoff, routing rule
+
 **Flow**:
 How a build runs after planning: as a pipeline build through the build
 team, or through the single-session flow. The Analyst recommends one, and
@@ -208,6 +234,14 @@ A task that changes stored data, runs a migration, or crosses an account or
 security boundary across several packages. The Analyst flags it, and
 recommends the pipeline for it whatever its size.
 _Avoid_: Risky task, critical task
+
+**Project manager hand-off**:
+The file that the engine writes at each milestone end, after the
+milestone's digest, so that the Project manager can go on in a fresh
+session: the plan state, the open escalations, the owner's decisions, the
+defaulted answers, and the usage to date. The server clears the Project
+manager's session before it delivers the hand-off's pointer.
+_Avoid_: Handover, summary, checkpoint
 
 **Execution**:
 The unattended phase of a build, in which the engine carries out the build
@@ -270,12 +304,13 @@ _Avoid_: Comment, instruction
 
 **Channel**:
 A topic space in the team chat, such as one per milestone or design question,
-that only its members read. A phase 2 addition.
+that only its members read. It joins only when a measurement shows a gap
+that it closes.
 _Avoid_: Room, topic
 
 **Side chat**:
 A private conversation between two or more agents in the team chat. The owner
-can read it. A phase 2 addition.
+can read it. It joins only when a measurement shows a gap that it closes.
 _Avoid_: Agent DM, back channel
 
 **Direct message**:
@@ -357,6 +392,21 @@ _Avoid_: Ticket, job, step
 The checks that the engine runs after each Developer attempt on a task: the
 tests, type checks, lint, the test lock, and the owned file set.
 _Avoid_: Gate (on its own, which is the review pipeline's check after a fix)
+
+### Usage
+
+**Corrected usage**:
+The tokens in of a build's agent calls, planning and review runs included,
+with each resumed session counted once. It leaves out tokens out and the
+Project manager's session. The usage alert compares it with the Analyst's
+usage estimate.
+_Avoid_: Total usage, raw usage
+
+**Usage history**:
+The table of finished builds' corrected usage, size, and task count that
+the engine keeps for each project. The Analyst scales its usage estimate
+from it.
+_Avoid_: Usage log, anchors
 
 ### Placement
 
