@@ -34,6 +34,7 @@ import {
   type CallCache,
   type CallDeps,
   type CallLedger,
+  type FailedCallRecord,
 } from "../calls/index.js";
 import type { AdapterOutput, Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
 import type { FindingFilter, Logger, PushOptions } from "../api/core-interface.js";
@@ -160,7 +161,10 @@ export interface TurnCall {
   sessionFolder?: string | null;
 }
 
-/** The build's call cache: each finished call in `calls/KEY.json`. */
+/**
+ * The build's call cache: each finished call in `calls/KEY.json`, and each
+ * call that didn't finish in `calls/failed/`.
+ */
 export class FileCallCache implements CallCache {
   constructor(private readonly store: BuildStore) {}
 
@@ -170,6 +174,10 @@ export class FileCallCache implements CallCache {
 
   write<T>(key: string, outcome: AgentOutcome<T>): Promise<void> {
     return this.store.writeJson(this.store.callPath(key), outcome);
+  }
+
+  failed(record: FailedCallRecord): Promise<void> {
+    return this.store.writeJson(this.store.failedCallPath(record.key, record.agentId), record);
   }
 }
 
