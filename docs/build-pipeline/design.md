@@ -407,6 +407,12 @@ The build size sets which steps run, as the following table shows:
 | Simplify | Skipped | Last milestone only | Each milestone |
 | Review | Runs | Runs | Runs |
 
+The build size also limits the tasks in the build plan, because each task
+costs a cold Developer start. The plan check refuses a small plan with more
+than one task and a medium plan with more than five, at a freeze and at a
+start. A large plan has no limit. The Contracts step doesn't count as a task.
+Every planning seat hears the limits in its prompt.
+
 ### Contracts
 
 In a medium or large build, the Contracts step runs after preflight and

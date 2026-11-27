@@ -74,6 +74,7 @@ const task = (id: string, title: string, module: string, dependsOn: string[] = [
 function threeTaskPlan(): BuildPlanInput {
   return cartPlan({
     title: "Cart total, discount, and label",
+    size: "medium",
     criteria: ["T1", "T2", "T3"].map((id) => ({ id: `AC-${id}`, text: `Task ${id} works.` })),
     tasks: [
       task("T1", "Cart total", "cart"),
