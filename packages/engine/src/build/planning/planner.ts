@@ -27,6 +27,8 @@ import {
   BuildSizeSchema,
   BuildPlanningSchema,
   BuildSpecSchema,
+  SavedBuildSpecSchema,
+  type SavedBuildSpec,
   draftBuildPlan,
   FlowRecommendationSchema,
   taskLimitText,
@@ -81,10 +83,16 @@ import { Meeting, type MeetingHost } from "./meeting.js";
 /** The engine's own draft plan, beside the one the Project manager can edit. */
 export const ENGINE_DRAFT_FILE = "planning/draft.engine.json";
 
-/** The answers the engine reads, by seat: the spec from the Analyst and the design from the Architect. */
-const ANSWERS: Readonly<Record<string, { name: string; schema: z.ZodTypeAny }>> = {
-  analyst: { name: "spec", schema: BuildSpecSchema },
-  architect: { name: "design", schema: BuildDesignSchema },
+/**
+ * The answers the engine reads, by seat: the spec from the Analyst and the
+ * design from the Architect. `schema` checks a new answer, and `saved` reads
+ * an answer saved by this or an earlier engine version.
+ */
+const ANSWERS: Readonly<
+  Record<string, { name: string; schema: z.ZodTypeAny; saved: z.ZodTypeAny }>
+> = {
+  analyst: { name: "spec", schema: BuildSpecSchema, saved: SavedBuildSpecSchema },
+  architect: { name: "design", schema: BuildDesignSchema, saved: BuildDesignSchema },
 };
 
 /** The SHA-256 of a plan without its version: two plans with one hash are the same plan. */
@@ -702,14 +710,14 @@ export class BuildPlanner {
   }
 
   /** The latest valid answer of `seat`, parsed with its schema, or `undefined`. */
-  private async latest(seat: "analyst"): Promise<z.infer<typeof BuildSpecSchema> | undefined>;
+  private async latest(seat: "analyst"): Promise<SavedBuildSpec | undefined>;
   private async latest(seat: "architect"): Promise<z.infer<typeof BuildDesignSchema> | undefined>;
   private async latest(seat: "analyst" | "architect"): Promise<unknown> {
     const latest = await this.latestAnswer(seat);
-    return latest && ANSWERS[seat]?.schema.parse(latest.answer);
+    return latest && ANSWERS[seat]?.saved.parse(latest.answer);
   }
 
-  /** The latest answer of `seat` that keeps its schema, when it has one, with its file. */
+  /** The latest answer of `seat` that keeps its saved-answer schema, when it has one, with its file. */
   private async latestAnswer(
     seat: string,
   ): Promise<{ file: string; answer: Record<string, unknown> } | undefined> {
@@ -718,7 +726,7 @@ export class BuildPlanner {
       const file = await this.store.readJson<CallFile>(this.store.path(call.file));
       if (!file?.answer) continue;
       const expected = ANSWERS[seat];
-      if (expected && !expected.schema.safeParse(file.answer).success) continue;
+      if (expected && !expected.saved.safeParse(file.answer).success) continue;
       return { file: call.file, answer: file.answer };
     }
     return undefined;

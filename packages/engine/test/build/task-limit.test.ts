@@ -1,9 +1,12 @@
 // The task limit by build size: the plan check refuses a medium plan with
 // more than five tasks and a small plan with more than one, and the planning
 // seats hear the limit in their prompts.
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { BuildPlanInput } from "@aio/contracts";
-import { PROJECT_ID, buildWorld, cartPlan } from "./harness.js";
+import { BuildPlanSchema, type BuildPlanInput } from "@aio/contracts";
+import { planHash } from "../../src/build/planning/planner.js";
+import { PROJECT_ID, buildWorld, cartPlan, type BuildWorld } from "./harness.js";
 
 const SLUG = "cart-total";
 
@@ -103,5 +106,75 @@ describe("the task limit by build size", () => {
       expect(prompt, role).toMatch(/medium build has at most 5 tasks/);
       expect(prompt, role).toMatch(/Contracts step doesn't count as a task/);
     }
+  });
+});
+
+/** A parsed JSON object whose fields the fixtures rewrite. */
+type Json = Record<string, unknown> & { frozen: Record<string, unknown>[] };
+
+describe("the task limit after an upgrade from 3.3", () => {
+  /** Changes a JSON file in the build's directory, even a read-only frozen plan. */
+  function edit(world: BuildWorld, path: string, change: (value: Json) => void): void {
+    const at = join(world.dir(SLUG), path);
+    chmodSync(at, 0o644);
+    const value = JSON.parse(readFileSync(at, "utf8")) as Json;
+    change(value);
+    writeFileSync(at, JSON.stringify(value, null, 2));
+  }
+
+  it("starts a medium plan with six tasks that 3.3 froze", async () => {
+    const world = await buildWorld();
+    await world.manager.freeze(freeze(planWith("large", 6)));
+    // 3.3 froze plans with no task limit and no flow choice.
+    let hash = "";
+    edit(world, "plans/v1.json", (plan) => {
+      plan.size = "medium";
+      delete plan.flow;
+      hash = planHash(BuildPlanSchema.parse(plan));
+    });
+    edit(world, "planning.json", (record) => {
+      record.frozen[0]!.hash = hash;
+      delete record.frozen[0]!.flow;
+    });
+    await world.restart();
+
+    const started = await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    expect(started.tasks).toHaveLength(6);
+    await world.manager.cancel(SLUG);
+  });
+
+  it("still refuses a medium plan with six tasks that this version froze", async () => {
+    const world = await buildWorld();
+    await world.manager.freeze(freeze(planWith("large", 6)));
+    let hash = "";
+    edit(world, "plans/v1.json", (plan) => {
+      plan.size = "medium";
+      hash = planHash(BuildPlanSchema.parse(plan));
+    });
+    edit(world, "planning.json", (record) => {
+      record.frozen[0]!.hash = hash;
+    });
+    await world.restart();
+
+    await expect(world.manager.start({ projectId: PROJECT_ID, slug: SLUG })).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/at most 5 tasks/),
+    });
+  });
+
+  it("resumes a running medium build with six tasks after an engine restart", async () => {
+    const world = await buildWorld();
+    await world.start(SLUG, planWith("large", 6));
+    await world.manager.pause(SLUG);
+    await world.waitFor(SLUG, (state) => state.status === "paused");
+    edit(world, "plan.json", (plan) => {
+      plan.size = "medium";
+      delete plan.flow;
+    });
+    await world.restart();
+
+    expect(await world.manager.get(SLUG)).toMatchObject({ status: "paused" });
+    expect((await world.manager.resume(SLUG)).tasks).toHaveLength(6);
+    await world.manager.cancel(SLUG);
   });
 });
