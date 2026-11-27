@@ -159,6 +159,11 @@ export interface TurnCall {
   sessionId?: string;
   /** The account folder that holds `sessionId`, as the session registry saved it. */
   sessionFolder?: string | null;
+  /**
+   * True for a message turn, which no drive waits on: a person's pause
+   * holds it before its vendor call, and the build still shows as idle.
+   */
+  background?: boolean;
 }
 
 /**
@@ -742,6 +747,7 @@ export class BuildContext {
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       ...(input.sessionFolder !== undefined ? { sessionFolder: input.sessionFolder } : {}),
     });
+    if (input.background) spec.background = true;
     return this.runTurn(spec, input.seat, input.taskId);
   }
 

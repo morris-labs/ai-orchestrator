@@ -63,6 +63,13 @@ export interface AgentCallSpec {
   /** Keep this vendor even when a person assigned the role to another one. */
   pinVendor?: boolean;
   /**
+   * True for a call that no driver waits on, such as a build's message
+   * turn. Instead of waiting at a person's pause, it throws `CallHeld`
+   * before its vendor call, so it holds no seat or worktree while the
+   * caller shows as held, and the caller makes it again after the resume.
+   */
+  background?: boolean;
+  /**
    * The build seat's placement the call runs on. The core copies it onto the
    * call's agent and lease events; `placeCall()` in `build/placements` sets
    * the vendor, tier, and effort to match.
@@ -79,8 +86,11 @@ export interface AgentCallSpec {
   specialties?: readonly SpecialtyName[];
 }
 
-/** The seat, the step, the specialties, and the placement of one call, for its lease and its events. */
-export type CallWork = Pick<AgentCallSpec, "seat" | "step" | "specialties" | "placement">;
+/** The seat, the step, the specialties, and the placement of one call, for its lease and its events, and whether it runs in the background. */
+export type CallWork = Pick<
+  AgentCallSpec,
+  "seat" | "step" | "specialties" | "placement" | "background"
+>;
 
 /**
  * Who a call belongs to: a review run (`runId`), a build (`buildId` with

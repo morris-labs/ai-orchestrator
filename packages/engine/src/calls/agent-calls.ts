@@ -26,6 +26,7 @@ import {
 import { TreeGuard } from "../state/tree-guard.js";
 import {
   AgentFailed,
+  CallHeld,
   CallTimeout,
   RoleDenied,
   RunCancelled,
@@ -178,19 +179,40 @@ export class AgentCalls {
     this.requestResume();
   }
 
+  /** True while a person's pause is requested, until the resume. */
+  get pausing(): boolean {
+    return this.pauseRequested;
+  }
+
+  /**
+   * Resolves when no person's pause holds the caller: at once without one,
+   * otherwise at the resume, a cancel, or a stopped driver. It changes no
+   * status, so work that no driver waits on can wait here.
+   */
+  untilResumed(): Promise<void> {
+    if (!this.pauseRequested) return Promise.resolve();
+    return this.gate().promise;
+  }
+
+  /** The gate that held callers wait on, made on first use. */
+  private gate(): { promise: Promise<void>; open: () => void } {
+    if (this.pauseGate) return this.pauseGate;
+    let open = () => undefined as void;
+    const promise = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    this.pauseGate = { promise, open };
+    return this.pauseGate;
+  }
+
   /** Called between agent calls: honors a pause or a cancel. */
   async checkpoint(): Promise<void> {
     this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (!this.pauseRequested) return;
-    let gate = this.pauseGate;
-    if (!gate) {
-      let open = () => undefined as void;
-      const promise = new Promise<void>((resolve) => {
-        open = resolve;
-      });
-      gate = { promise, open };
-      this.pauseGate = gate;
+    const fresh = this.pauseGate === null;
+    const gate = this.gate();
+    if (fresh) {
       // A person's pause has no end time, even when it follows a timed wait.
       await this.host.status.pause(undefined);
     }
@@ -204,6 +226,14 @@ export class AgentCalls {
     this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (this.host.status.paused()) await this.host.status.resume();
+  }
+
+  /** A call's checkpoint: a background call throws `CallHeld` where another call would wait. */
+  private async callCheckpoint(work: CallWork): Promise<void> {
+    if (work.background && this.pauseRequested && !this.stopped && !this.cancelRequested) {
+      throw new CallHeld();
+    }
+    await this.checkpoint();
   }
 
   /**
@@ -356,7 +386,7 @@ export class AgentCalls {
     const routing = this.host.routing;
     let vendor = start;
     for (;;) {
-      await this.checkpoint();
+      await this.callCheckpoint(spec);
       vendor = this.assigned(spec, vendor);
       const limit = this.limitOf(vendor);
       if (!limit) return vendor;
@@ -417,7 +447,7 @@ export class AgentCalls {
     const host = this.host;
     let waiting = false;
     for (;;) {
-      await this.checkpoint();
+      await this.callCheckpoint(work);
       // A redirect to one of these would only stop the call, so the server
       // leaves them out and pauses when nothing is left.
       const exclude = host.routing.fallbackOrder.filter(
@@ -569,7 +599,8 @@ export class AgentCalls {
         return outcome;
       },
       async (error: unknown) => {
-        await this.track(spec, error instanceof RunCancelled ? "skipped" : "failed");
+        const skipped = error instanceof RunCancelled || error instanceof CallHeld;
+        await this.track(spec, skipped ? "skipped" : "failed");
         throw error;
       },
     );

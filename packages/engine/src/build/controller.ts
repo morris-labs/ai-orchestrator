@@ -200,6 +200,8 @@ export class BuildController {
     const roles = await loadRoles(state.repoPath, location.roles);
     const full = await servicesFor(location, services);
     const ctx = new BuildContext(state, plan, ledger, store, worktree, roles, full);
+    // A person's pause outlasts the engine: no call, such as a message turn, starts until the resume.
+    if (state.status === "paused" && state.pausedBy !== undefined) ctx.calls.requestPause();
     return new BuildController(ctx, services.log, pipeline);
   }
 
