@@ -61,11 +61,18 @@ For a medium or large build, the Project manager runs the planning team
 while it keeps talking with you:
 
 1. The Analyst writes the spec. The Project manager shows you the
-   acceptance criteria, the size, the expected usage, and the secrets and
-   services that the build needs. Ask for changes until the spec is right.
+   acceptance criteria, the size, the expected usage, the secrets and
+   services that the build needs, and the recommended flow. It asks you
+   only the open questions whose answer would change an acceptance
+   criterion, and lists the Analyst's answers to the rest as defaulted
+   answers, which you can overrule. Ask for changes until the spec is
+   right.
 1. The Architect writes the design: the milestones and the task graph.
 1. The Critic attacks the design in a meeting. The Project manager reports
    the outcome and any open objections before it asks for your approval.
+
+For a small build, the Project manager fills in the recommendation and
+the defaulted answers itself.
 
 Each step can take many minutes. The Project manager runs them in the
 background and tells you when each one answers. To pass a remark to a
@@ -76,6 +83,26 @@ Before you approve, tick each secret that the plan lists in the box's
 **Secrets (project)** section. For more information, see
 [Secrets](../secrets.md).
 
+## Choose the flow
+
+Before the Architect starts, the Project manager tells you the recommended
+flow, whether the task is high-risk, and why. A task is high-risk when it
+changes stored data, runs a migration, or crosses an account or security
+boundary across several packages. The following flows are available:
+
+- **Single session:** one Developer session works the acceptance
+  criteria, one review run checks the result, and the same session fixes
+  the confirmed findings. The Project manager recommends it for a small or
+  medium task that isn't high-risk, because in the measurements it cost
+  less and did as well.
+- **Pipeline:** the full build team, with tests first on another vendor,
+  the test lock, and the Scribe. The Project manager recommends it for a
+  large or high-risk task.
+
+You can choose either flow, whatever the recommendation. Only you choose,
+and the build records your choice. For more information, see the "Flow"
+section of [Build pipeline design](design.md#flow).
+
 ## Approve and start
 
 When the plan is right, approve it in plain words. The Project manager then
@@ -84,8 +111,9 @@ does the following:
 1. It asks whether the build can push its branch and open its pull request,
    unless you already said so. The build plan records your answer. Without
    push permission, the build keeps its branch local.
-1. It freezes the plan as version 1 in the `.aio/builds/SLUG/plans/`
-   directory of the project. A later change becomes the next version.
+1. It freezes the plan, with your push answer and flow choice, as version 1
+   in the `.aio/builds/SLUG/plans/` directory of the project. A later
+   change becomes the next version.
 1. It starts the build on the `build/SLUG` branch, in a worktree of its own.
    Your checkout stays untouched.
 
@@ -111,15 +139,24 @@ also pauses the build, and starting the box resumes it. Cancel a build only
 when you mean it; a cancelled build keeps its branch and stays resumable
 until you delete it.
 
-The Project manager's session can compact or restart during a long build.
-The skill has it reread the build's `STATUS.md` file, the build plan, and
-its inbox before it acts again, so you don't need to repeat anything.
+At each milestone end, the Project manager reports the digest, and then the
+server clears its session and starts a fresh one from a hand-off file: the
+plan state, the open escalations, your decisions, the defaulted answers,
+and the usage so far. The fresh session tells you what comes next and asks
+again any question that still waits. You don't need to type `/clear`.
+
+The Project manager's session can also compact or restart during a long
+build. The skill has it reread the newest hand-off file, or the build's
+`STATUS.md` file and the build plan, and its inbox before it acts again, so
+you don't need to repeat anything.
 
 ## Finish
 
 The build ends release ready: the review pipeline reports the diff clean,
 CI passes, and the docs, the changelog entry, and the pull request
-description are written. The Project manager tells you the branch, the pull
+description are written. A single-session build writes no decision
+records, glossary entries, or changelog entry; its pull request lists the
+acceptance criteria instead. The Project manager tells you the branch, the pull
 request, and the checks that it leaves to you. The build never merges.
 After you merge, tell the Project manager whether to tag and release.
 

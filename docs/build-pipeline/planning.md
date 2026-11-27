@@ -129,10 +129,11 @@ start.
 ## Freeze the build plan
 
 When the owner approves the plan, ask the owner whether the build can push
-its branch and open its pull request, and then run the following command:
+its branch and open its pull request, and which flow the build runs, and
+then run the following command:
 
 ```bash
-aio-build freeze SLUG [PLAN_FILE] --push ANSWER
+aio-build freeze SLUG [PLAN_FILE] --push ANSWER --flow FLOW
 
 ```
 
@@ -140,8 +141,14 @@ Replace the following:
 
 - `PLAN_FILE`: the plan to freeze. Leave it out to freeze the draft.
 - `ANSWER`: `yes` when the owner allows the push, or `no`.
+- `FLOW`: `pipeline` for a build through the full build team, or
+  `single-session` for one Developer session and one review run. The
+  Analyst's spec recommends one, and the owner can choose either. For more
+  information, see [Flow](design.md#flow).
 
-The engine refuses a freeze without the push answer. It writes each plan
+The engine refuses a freeze without the push answer or the flow choice, and
+names the Analyst's recommendation in the refusal. The frozen version, the
+build plan's `flow` field, and the `STATUS.md` file record the choice. It writes each plan
 that changed since the last freeze as the next version, in
 `.aio/builds/SLUG/plans/vN.json`, and never changes a frozen version. To
 change a frozen plan, freeze the changed plan; it becomes the next version.

@@ -45,6 +45,16 @@ The file holds the following fields:
 | `test_dispute` | A second test dispute about one test, or a third in one task, which the Project manager rules on; or a Test engineer's fix that changes what a criterion means, which the owner decides. For details, see [Test disputes](test-disputes.md). | Project manager; owner for a criterion change |
 | `set_aside` | A paused task's saved work no longer applies on top of the tasks that ran since. The patch stays in the task's directory. | Project manager |
 
+A single-session build runs no Contracts step, no tests first, and no
+criteria trace, so it raises no `contracts` or `tests_first` escalation and
+no `release_ready` escalation for a criterion without a passing locked test.
+
+A build's review run moves a role off a vendor whose quota has no reset
+time, without an escalation. When no other vendor can take the role, the
+run stops at a `ceiling` decision, which becomes a `review` escalation. For
+details, see the "Limits and usage" section of
+[Build pipeline design](design.md#limits-and-usage).
+
 A Developer never works around a missing secret or service, for example
 with a mock that ships. It stops and reports the gap in the `blocked` field
 of its answer, and the engine skips the task gate for that attempt.
