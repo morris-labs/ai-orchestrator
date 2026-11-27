@@ -30,7 +30,7 @@ import { writeClosingRecord } from "./closing-record.js";
 import { BuildContext, type BuildServices } from "./context.js";
 import { ulid } from "./ids.js";
 import { loadRoles, type LoadRolesOptions } from "./roles/index.js";
-import { BUILD_PIPELINE, STEP_HANDLERS, type StepHandler } from "./steps/index.js";
+import { BUILD_PIPELINE, STEP_HANDLERS, stepsForFlow, type StepHandler } from "./steps/index.js";
 import { checkPlan } from "./plan-check.js";
 import { resolveEscalation } from "./resolve.js";
 import { BuildStore } from "./store.js";
@@ -96,11 +96,16 @@ export class BuildController {
   /** The closing record under way after a cancel. */
   private closing: Promise<void> | null = null;
 
+  /** The steps this build runs, in order: the pipeline's, less the ones its flow skips. */
+  private readonly steps: readonly BuildStep[];
+
   private constructor(
     readonly ctx: BuildContext,
     private readonly log: BuildServices["log"],
     private readonly pipeline: BuildPipeline,
-  ) {}
+  ) {
+    this.steps = stepsForFlow(pipeline.steps, ctx.plan.flow);
+  }
 
   get state(): BuildState {
     return this.ctx.state;
@@ -157,7 +162,7 @@ export class BuildController {
       branch,
       worktree: worktree.path,
       status: "running",
-      step: pipeline.steps[0] ?? "tasks",
+      step: stepsForFlow(pipeline.steps, request.plan.flow)[0] ?? "tasks",
       tasks: request.plan.tasks.map((t) => ({
         id: t.id,
         status: "pending",
@@ -256,7 +261,7 @@ export class BuildController {
         // it started finish before the next step.
         await ctx.sessions.idle();
         await ctx.calls.checkpoint();
-        const next = this.pipeline.steps[this.pipeline.steps.indexOf(step) + 1];
+        const next = this.steps[this.steps.indexOf(step) + 1];
         if (!next) {
           // The last step's note, such as where its digest is, stays.
           await ctx.setStatus("finished", ctx.state.note);

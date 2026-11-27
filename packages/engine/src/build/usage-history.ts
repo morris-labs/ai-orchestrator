@@ -53,16 +53,18 @@ async function readHistory(projectRoot: string): Promise<UsageHistoryEntry[]> {
   return saved?.builds ?? [];
 }
 
-/** The tokens in of the `lease.settled` events of build `buildId` in an `events.jsonl` file. */
-async function settledTokensIn(file: string, buildId: string): Promise<number> {
+type SettledEvent = Extract<AioEvent, { type: "lease.settled" }>;
+
+/** The `lease.settled` events of build `buildId` in an `events.jsonl` file. */
+async function settledEvents(file: string, buildId: string): Promise<SettledEvent[]> {
   let text: string;
   try {
     text = await readFile(file, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-  let total = 0;
+  const events: SettledEvent[] = [];
   for (const line of text.split("\n")) {
     if (!line.includes('"lease.settled"')) continue;
     let event: AioEvent;
@@ -71,9 +73,14 @@ async function settledTokensIn(file: string, buildId: string): Promise<number> {
     } catch {
       continue;
     }
-    if (event.type === "lease.settled" && event.buildId === buildId) total += event.tokens.in;
+    if (event.type === "lease.settled" && event.buildId === buildId) events.push(event);
   }
-  return total;
+  return events;
+}
+
+/** The tokens in of the `lease.settled` events of build `buildId` in an `events.jsonl` file. */
+async function settledTokensIn(file: string, buildId: string): Promise<number> {
+  return (await settledEvents(file, buildId)).reduce((sum, e) => sum + e.tokens.in, 0);
 }
 
 /** The review runs that the build's review step started, from `review/run*.json`. */
@@ -103,6 +110,71 @@ export async function correctedTokensIn(ctx: BuildContext): Promise<number> {
     total += await settledTokensIn(join(projectRoot, RUNS_DIR, runId, "events.jsonl"), id);
   }
   return total;
+}
+
+/** One row of the usage by seat and step. */
+export interface SeatStepUsage {
+  seat: string;
+  step: string;
+  calls: number;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+}
+
+/** The seat name of a review run's own calls, such as its reviewers', which fill no build seat. */
+export const REVIEW_RUN_SEAT = "(review run)";
+
+/**
+ * The usage of the build's settled agent calls and its review runs' calls,
+ * by seat and step, sorted by seat and then step. A review run's own calls
+ * count as the `(review run)` seat in the review step.
+ */
+export async function usageBySeatAndStep(ctx: BuildContext): Promise<SeatStepUsage[]> {
+  const { id } = ctx.state;
+  const { projectRoot } = ctx.store;
+  const events = await settledEvents(ctx.store.path("events.jsonl"), id);
+  for (const runId of await reviewRunIds(ctx)) {
+    events.push(...(await settledEvents(join(projectRoot, RUNS_DIR, runId, "events.jsonl"), id)));
+  }
+  const rows = new Map<string, SeatStepUsage>();
+  for (const event of events) {
+    const seat = event.seat ?? REVIEW_RUN_SEAT;
+    const step = event.step ?? (event.runId !== null ? "review" : "(no step)");
+    const key = `${seat}\0${step}`;
+    const row = rows.get(key) ?? { seat, step, calls: 0, tokensIn: 0, tokensOut: 0, cost: 0 };
+    row.calls += 1;
+    row.tokensIn += event.tokens.in;
+    row.tokensOut += event.tokens.out;
+    row.cost += event.costEstimate;
+    rows.set(key, row);
+  }
+  return [...rows.values()].sort(
+    (a, b) => a.seat.localeCompare(b.seat) || a.step.localeCompare(b.step),
+  );
+}
+
+/** The usage by seat and step as a Markdown table with a total row. */
+export function seatStepTable(rows: readonly SeatStepUsage[]): string[] {
+  if (rows.length === 0) return ["No agent call settled."];
+  const line = (r: SeatStepUsage) =>
+    `| ${r.seat} | ${r.step} | ${r.calls} | ${r.tokensIn} | ${r.tokensOut} | ${r.cost.toFixed(2)} |`;
+  const total = rows.reduce(
+    (t, r) => ({
+      ...t,
+      calls: t.calls + r.calls,
+      tokensIn: t.tokensIn + r.tokensIn,
+      tokensOut: t.tokensOut + r.tokensOut,
+      cost: t.cost + r.cost,
+    }),
+    { seat: "Total", step: "", calls: 0, tokensIn: 0, tokensOut: 0, cost: 0 },
+  );
+  return [
+    "| Seat | Step | Calls | Tokens in | Tokens out | Cost estimate (USD) |",
+    "| :-- | :-- | --: | --: | --: | --: |",
+    ...rows.map(line),
+    line(total),
+  ];
 }
 
 /** Adds a finished build's corrected usage to the table for its size, or replaces its entry. */

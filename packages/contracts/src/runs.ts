@@ -216,7 +216,8 @@ export function profileRoles(profile: Profile, round: number): RoleAssignment {
  * The option a build sets on the review run it starts. The run's calls name
  * the build, so the server exempts them from the usage ceilings, and the
  * fixer takes the build's seat: its vendor, tier, and effort, as a fresh
- * agent with the task context in its prompt.
+ * agent with the task context in its prompt, or as a resume of the seat's
+ * session when `fixer.session` names one.
  */
 export const BuildRunOptionSchema = z.object({
   buildId: BuildIdSchema,
@@ -225,6 +226,17 @@ export const BuildRunOptionSchema = z.object({
     placement: SeatPlacementSchema,
     /** The build's task context, which the fixer's prompt carries. */
     context: z.string().min(1),
+    /**
+     * The seat's session that every fix batch resumes, as in the
+     * single-session flow, with the account folder that holds it. Absent,
+     * each batch gets a fresh agent.
+     */
+    session: z
+      .object({
+        id: z.string().min(1),
+        folder: z.string().min(1).nullable().optional(),
+      })
+      .optional(),
   }),
   /**
    * The build plan's commands, which the run's gate runs in place of the

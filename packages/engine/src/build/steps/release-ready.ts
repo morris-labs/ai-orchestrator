@@ -27,7 +27,12 @@
 //    before it pushes.
 //
 // The build then ends release ready, with a digest for the Project manager
-// in `digests/release-ready.md`.
+// in `digests/release-ready.md`. The digest lists the criteria and the usage
+// by seat and step.
+//
+// The single-session flow writes no locked tests and has no Scribe, so it
+// skips the criteria trace and the Scribe: the pull request lists the
+// criteria as the plan states them, under the plan's title.
 import { readFile, readdir } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import type {
@@ -57,6 +62,7 @@ import { runListedTest } from "../test-command.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import { reportProjectManagerUsage, type TranscriptUsage } from "../pm-usage.js";
+import { seatStepTable, usageBySeatAndStep, type SeatStepUsage } from "../usage-history.js";
 import { CLEAN_REVIEW, REVIEW_POLL_MS, ensureRun, reopenRun } from "./review.js";
 import type { StepOutcome } from "./types.js";
 
@@ -124,6 +130,25 @@ export interface PushRecord {
   prNumber: number | null;
   prUrl: string | null;
   stopReason: StopReason | null;
+}
+
+/** True when the build runs the single-session flow, which has no locked tests and no Scribe. */
+function singleSession(ctx: BuildContext): boolean {
+  return ctx.plan.flow === "single_session";
+}
+
+/**
+ * The record part of a single-session build, which has no Scribe: no record
+ * commit, and the plan's title for the pull request.
+ */
+async function planRecord(ctx: BuildContext): Promise<DoneScribe> {
+  return {
+    start: await ctx.worktree.head(),
+    callKey: "",
+    commit: null,
+    title: ctx.plan.title,
+    body: `${ctx.plan.title}. The build ran the single-session flow: one Developer session wrote the change, and one review run checked it.`,
+  };
 }
 
 /** The criteria that a test or a UI check verifies. */
@@ -359,12 +384,19 @@ export function pullRequestBody(
     const passing = c.tests.filter((t) => t.passed).map((t) => `\`${t.file}\` "${t.name}"`);
     return `${c.id}: ${texts.get(c.id) ?? ""} Verified by ${passing.join(", ")}.`;
   });
+  const criteria = singleSession(ctx)
+    ? [
+        "The single-session flow locks no tests, so the build doesn't trace these criteria to tests. The review run and the final gate checked the change.",
+        "",
+        ...ctx.plan.criteria.map((c) => `- ${c.id}: ${c.text} (${c.verification})`),
+      ]
+    : bullets(traced, "No criterion has an automated check.");
   return [
     scribe.body,
     "",
     "## Acceptance criteria",
     "",
-    ...bullets(traced, "No criterion has an automated check."),
+    ...criteria,
     "",
     "## Owner checks",
     "",
@@ -604,16 +636,27 @@ function digest(
   push: PushRecord | null,
   pm: TranscriptUsage | null,
   nits: readonly Finding[] = [],
+  usage: readonly SeatStepUsage[] = [],
 ): string {
   const owner = ownerChecks(ctx);
   return [
     `# Build ${ctx.state.slug} is release ready`,
     "",
+    ...(singleSession(ctx)
+      ? [
+          "The build ran the single-session flow: one Developer session, one review run whose confirmed findings went back to that session, and no tests first, Contracts step, or Scribe.",
+          "",
+        ]
+      : []),
     push
       ? `The build pushed \`${ctx.state.branch}\` and opened ${push.prUrl ?? `pull request #${push.prNumber ?? "?"}`}. Its checks pass. Nothing merges it: the owner reviews and merges.`
       : `The build plan says not to push, so \`${ctx.state.branch}\` stays local. The pull request description is in \`${RELEASE_FILES.pullRequest}\`.`,
     "",
-    `- Criteria traced to passing tests: ${trace.criteria.map((c) => c.id).join(", ") || "none"}.`,
+    ...(singleSession(ctx)
+      ? []
+      : [
+          `- Criteria traced to passing tests: ${trace.criteria.map((c) => c.id).join(", ") || "none"}.`,
+        ]),
     `- Owner checks for the owner: ${owner.map((c) => c.id).join(", ") || "none"}.`,
     `- Known failing tests: ${knownFailingLines(baseline, gate).length}. Fixed tests: ${knownFailingLines(baseline, gate, true).length}. Flaky tests: ${baseline.flaky.length}.`,
     `- Record: ${scribe.commit ? `commit \`${scribe.commit.slice(0, 12)}\`` : "no record changes"}.`,
@@ -629,12 +672,27 @@ function digest(
         ]
       : []),
     "",
+    "## Criteria",
+    "",
+    ...ctx.plan.criteria.map((c) => `- ${c.id} (${c.verification}): ${c.text}`),
+    "",
+    "## Usage by seat and step",
+    "",
+    "What the build's settled agent calls and its review runs' calls spent, by seat and step. The review run's own calls, such as its reviewers', count as the (review run) seat.",
+    "",
+    ...seatStepTable(usage),
+    "",
   ].join("\n");
 }
 
 /** The release ready step. */
 export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   let trace = await ctx.store.readJson<TraceRecord>(ctx.store.path(RELEASE_FILES.trace));
+  // The single-session flow locks no tests, so it has no criteria to trace.
+  if (!trace && singleSession(ctx)) {
+    trace = { passed: true, criteria: [] };
+    await ctx.store.writeJson(ctx.store.path(RELEASE_FILES.trace), trace);
+  }
   if (!trace) {
     trace = await traceCriteria(ctx);
     if (ctx.signal.aborted) throw new RunCancelled();
@@ -654,7 +712,9 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   await ctx.calls.checkpoint();
   let scribe: DoneScribe;
   try {
-    scribe = await runScribe(ctx, await loadBaseline(ctx.store));
+    scribe = singleSession(ctx)
+      ? await planRecord(ctx)
+      : await runScribe(ctx, await loadBaseline(ctx.store));
   } catch (error) {
     const draft = escalationForCallError(error, null);
     if (!draft) throw error;
@@ -702,7 +762,17 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   const pm = await reportProjectManagerUsage(ctx);
   await ctx.store.writeText(
     ctx.store.path(RELEASE_FILES.digest),
-    digest(ctx, scribe, trace, baseline, gate, push, pm, await reviewNits(ctx)),
+    digest(
+      ctx,
+      scribe,
+      trace,
+      baseline,
+      gate,
+      push,
+      pm,
+      await reviewNits(ctx),
+      await usageBySeatAndStep(ctx),
+    ),
   );
   ctx.state.note = `Release ready. The digest is in ${RELEASE_FILES.digest}.`;
   await ctx.persist();

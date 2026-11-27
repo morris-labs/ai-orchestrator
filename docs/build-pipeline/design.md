@@ -108,8 +108,26 @@ packages. The engine refuses a spec whose recommendation breaks this rule.
 The Project manager shows the recommendation to the owner before planning
 goes further. The owner can choose either flow, and the freeze records the
 choice (`aio-build freeze --flow`) in the frozen version, the build plan's
-`flow` field, and the status file. Until the single-session flow ships, a
-start refuses a plan that chooses it.
+`flow` field, and the status file.
+
+A single-session build runs these steps of the milestone loop and skips the
+rest:
+
+1. **Preflight**, as in a pipeline build.
+2. **Tasks**, with one Developer session. The first task's call starts the
+   session, and every later task and attempt resumes it. The task gate
+   checks each attempt. No tests are locked, so the Developer writes the
+   tests that show each criterion holds, in its owned files.
+3. **Review**: one review run on the whole build diff, as in single PR
+   mode. The run's fixer resumes the Developer's session, so the confirmed
+   findings go back to the session that wrote the code.
+4. **Release ready**, without the criteria trace and the Scribe. The
+   final gate, the push answer, and the push and CI loop run as in a
+   pipeline build. The pull request lists the criteria as the plan states
+   them, and the digest lists the criteria and the usage by seat and step.
+
+It skips the Contracts step, tests first, and the Scribe. Usage is recorded
+by seat and step as in a pipeline build, so the two flows compare over time.
 
 ### Default planning answers
 

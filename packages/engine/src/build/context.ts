@@ -128,6 +128,12 @@ export interface SeatCall {
    */
   proceed?: () => boolean;
   /**
+   * True to resume the seat's current session for the task instead of
+   * starting a new agent, as the single-session flow does. A seat without a
+   * session on the same placement starts a new agent all the same.
+   */
+  resume?: boolean;
+  /**
    * Runs once the seat and the worktree are the drive's, right before the
    * call, such as to record the branch head that the agent's changes count
    * from: message turns can commit while the call waits for the seat.
@@ -698,6 +704,9 @@ export class BuildContext {
           ...(decisions !== "" ? { decisions } : {}),
           ...(this.team ? { teamChat: true } : {}),
         };
+        const session = input.resume
+          ? await this.sessions.resumable(input.seat, input.task.id, placement)
+          : undefined;
         const outcome = await this.runTurn(
           seatCallSpec(role, placement, {
             seat: input.seat,
@@ -707,10 +716,22 @@ export class BuildContext {
             repoPath: this.worktree.path,
             scratchDir: this.store.scratchDir,
             specialties: packs,
+            ...(session?.sessionId
+              ? {
+                  sessionId: session.sessionId,
+                  ...(session.accountFolder !== undefined
+                    ? { sessionFolder: session.accountFolder }
+                    : {}),
+                }
+              : {}),
           }),
           input.seat,
           input.task.id,
         );
+        if (session) {
+          await this.sessions.continued(session, input.key, outcome);
+          return outcome;
+        }
         await this.sessions.started({
           seat: input.seat,
           taskIds,
