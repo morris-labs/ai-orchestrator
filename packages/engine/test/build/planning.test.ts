@@ -479,7 +479,7 @@ describe("the recommended flow", () => {
     expect(status).toContain("Recommended flow: single session");
   });
 
-  it("records a single-session choice and refuses to start it until that flow exists", async () => {
+  it("records a single-session choice and starts the build in that flow", async () => {
     const world = await planningWorld();
     await plan(world);
 
@@ -488,14 +488,20 @@ describe("the recommended flow", () => {
     expect(answer.plan.flow).toBe("single_session");
     expect(world.file(SLUG, "STATUS.md")).toMatch(/Version 1:.*Flow: single session/);
 
-    await expect(world.manager.start({ projectId: PROJECT_ID, slug: SLUG })).rejects.toMatchObject({
-      code: "validation",
-      message: expect.stringMatching(/single-session flow isn't built yet.*--flow pipeline/s),
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
     });
-    expect(await world.manager.get(SLUG)).toBeNull();
-    expect(await world.manager.planning(SLUG)).toMatchObject({
-      frozen: [{ version: 1, flow: "single_session" }],
-    });
-    expect(world.calls().some((c) => c.prompt.includes("Task T1"))).toBe(false);
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    const state = await world.settle(SLUG);
+    // The single-session flow skips the Contracts step and tests first.
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    expect(state.tasks).toEqual([expect.objectContaining({ id: "T1", status: "done" })]);
+    const steps = world.events
+      .ofType("build.changed")
+      .filter((e) => e.build.id === state.id)
+      .map((e) => e.build.step);
+    expect(steps).not.toContain("contracts");
+    expect(steps).not.toContain("tests_first");
+    expect(world.file(SLUG, "STATUS.md")).toContain("- Flow: single session");
   });
 });

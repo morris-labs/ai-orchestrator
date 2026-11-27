@@ -170,9 +170,8 @@ Options:
                  and open its pull request.
   --flow pipeline|single-session
                  The owner's flow choice: a pipeline build through the full
-                 build team, or one Developer session plus one review run.
-                 The engine doesn't run the single-session flow yet, so a
-                 start refuses a plan that chooses it.
+                 build team, or one Developer session plus one review run
+                 whose confirmed findings go back to that session.
   --note TEXT    Why, or the clarification itself for clarify.
   --order TASKS  The task IDs in the order they run, separated by commas,
                  such as T2,T1.

@@ -29,7 +29,7 @@ import type { RoleTask } from "../roles/index.js";
 import { ownerPostAnswer } from "../owner/index.js";
 import { DEFAULT_TURN_ANSWER, freshPrompt, resumePrompt } from "./prompts.js";
 import { SessionRegistryFile } from "./registry.js";
-import { freshReason } from "./rule.js";
+import { freshReason, samePlacement } from "./rule.js";
 
 /** A seat call's first turn, as the desk records it. */
 export interface SeatSession {
@@ -150,6 +150,47 @@ export class SessionDesk {
         inputTokens: input.outcome.tokens.in,
       },
     });
+  }
+
+  /**
+   * The session that a seat call in `seat` for `taskId` resumes on
+   * `placement`, as in the single-session flow: the seat's current session
+   * for the task, when it has a vendor session on the same placement.
+   * `undefined` when the call must start a new agent.
+   */
+  async resumable(
+    seat: string,
+    taskId: string,
+    placement: SeatPlacement,
+  ): Promise<SessionRecord | undefined> {
+    const session = await this.registry.current(seat, taskId);
+    if (!session || session.sessionId === null) return undefined;
+    if (placement.fresh || !samePlacement(session.placement, placement)) return undefined;
+    return session;
+  }
+
+  /**
+   * Records a seat call that resumed `session` as its next turn. A cached
+   * call that a restarted build returns again is recorded once.
+   */
+  async continued(
+    session: SessionRecord,
+    key: string,
+    outcome: AgentOutcome<unknown>,
+  ): Promise<void> {
+    if (await this.registry.hasTurn(key)) return;
+    await this.registry.addTurn(
+      session.id,
+      {
+        key,
+        messageId: null,
+        at: this.now(),
+        head: await this.ctx.worktree.head(),
+        inputTokens: outcome.tokens.in,
+      },
+      outcome.sessionId,
+      outcome.accountFolder,
+    );
   }
 
   /**

@@ -1,7 +1,7 @@
 // The build pipeline: the steps a build runs, in order, and the handler of
 // each. A step in the pipeline without a handler is one this engine version
 // doesn't run yet: the build pauses there with a note.
-import type { BuildStep } from "@aio/contracts";
+import type { BuildFlow, BuildStep } from "@aio/contracts";
 import { runContracts } from "./contracts.js";
 import { runPreflight } from "./preflight.js";
 import { runReleaseReady } from "./release-ready.js";
@@ -39,6 +39,24 @@ export const BUILD_PIPELINE: readonly BuildStep[] = [
   "review",
   "release_ready",
 ];
+
+/**
+ * The steps that the single-session flow skips: one Developer session works
+ * against the criteria, with no contracts or tests written first.
+ */
+export const SINGLE_SESSION_SKIPS: readonly BuildStep[] = ["contracts", "tests_first"];
+
+/**
+ * The steps of `steps` that a build with `flow` runs, in order. A plan
+ * without a flow runs as a pipeline build.
+ */
+export function stepsForFlow(
+  steps: readonly BuildStep[],
+  flow: BuildFlow | null | undefined,
+): BuildStep[] {
+  if (flow !== "single_session") return [...steps];
+  return steps.filter((step) => !SINGLE_SESSION_SKIPS.includes(step));
+}
 
 /** The handler of each step that this engine version runs. */
 export const STEP_HANDLERS: Partial<Record<BuildStep, StepHandler>> = {
