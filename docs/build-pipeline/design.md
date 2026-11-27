@@ -304,7 +304,10 @@ and code takes the turns:
    change. It states a position (object, concern, or no objection), a severity
    (major or minor) for each point, and the reasons.
 3. The proposer revises. The meeting repeats until no major objection
-   remains, or until it reaches its round cap, which defaults to three.
+   remains, or until it reaches its round cap. The build size sets the
+   default cap: one round for a small or medium build, so that planning
+   doesn't grow the design past the acceptance criteria, and three for a
+   large build.
    The Project manager can end the meeting earlier, such as once the plan
    it discusses is frozen. The turn under way stops, and the major
    objections of the last full round stay open.

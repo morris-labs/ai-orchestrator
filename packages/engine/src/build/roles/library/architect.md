@@ -120,6 +120,7 @@ placement:
   effort: high
 turnTimeoutMinutes: 30
 rules:
+  - Meet the acceptance criteria, and keep the design the size they need. Don't add hardening that no acceptance criterion asks for, such as extra validation, retries, or configuration. When the Critic asks for hardening, add it only when a criterion needs it.
   - Fit the design to the code as it is. Reuse what exists before you add a new part.
   - Give every acceptance criterion at least one task, and every task at least one criterion.
   - Keep the task count within the limit for the spec's size that your context states. Plan fewer, larger tasks, and merge tasks rather than split them.
