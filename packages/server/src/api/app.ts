@@ -16,6 +16,7 @@ import {
 import type { Core, CoreFactory, CoreServices, EngineEndpoint } from "./core-interface.js";
 import type { ApiDeps } from "./deps.js";
 import { createApiServer, type ApiServer } from "./server.js";
+import { createBoxReview, type BoxReview } from "./box-review.js";
 import { loadOrCreateToken } from "./auth.js";
 import { loadOrCreateTlsIdentity } from "./tls.js";
 import { assertDevEnginesAllowed, withDevEngines } from "../events/dev-engines.js";
@@ -139,6 +140,11 @@ export async function startApp(options: AppOptions): Promise<App> {
   const sink = new LateSink();
   let secrets: SecretsService | null = null;
   let runs: RunMirror | null = null;
+  let boxReview: BoxReview | null = null;
+  const readyReview = (): BoxReview => {
+    if (!boxReview) throw new Error("The API server is not ready.");
+    return boxReview;
+  };
   const broker = new SecretsBroker({
     source: {
       names: async (projectId) => {
@@ -149,6 +155,10 @@ export async function startApp(options: AppOptions): Promise<App> {
         if (!secrets) throw new Error("The secrets service is not ready.");
         return secrets.readNames(projectId, names);
       },
+    },
+    review: {
+      start: (projectId, request) => readyReview().start(projectId, request),
+      get: (projectId, boxId, runId) => readyReview().get(projectId, boxId, runId),
     },
     dirFor: (container) =>
       brokerDirFor({ home: options.home, dataDir: options.dataDir }, container),
@@ -525,7 +535,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     }),
   );
 
-  const api = await createApiServer({
+  const apiDeps: Parameters<typeof createApiServer>[0] = {
     core,
     home: options.home,
     token,
@@ -583,7 +593,9 @@ export async function startApp(options: AppOptions): Promise<App> {
     },
     multiHost,
     log,
-  });
+  };
+  const api = await createApiServer(apiDeps);
+  boxReview = createBoxReview(apiDeps);
   apiServer = api;
   const config = settings();
   const port = await api.listen(options.port ?? config.serverPort, BIND_HOST);

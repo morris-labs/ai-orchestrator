@@ -2,9 +2,12 @@
 // socket that the server opens for each project container and mounts into
 // it, or, under Docker Desktop, over TCP on the host's loopback address with
 // a bearer token. The engine and the `aio-secret` client in the image speak
-// it. See `docs/secrets.md`.
+// it, and the `aio-box-review` client uses its review routes to start a
+// review run of a box's own branch. See `docs/secrets.md`.
 import { z } from "zod";
 import { ApiErrorCodeSchema, EnvVarNameSchema } from "./common.js";
+import { FindingSchema } from "./findings.js";
+import { ProfileSchema, RunDepthSchema, RunStateSchema } from "./runs.js";
 
 /** Where the server mounts a container's broker directory, read-only. */
 export const BROKER_MOUNT = "/run/aio-broker";
@@ -77,6 +80,13 @@ export type BrokerTransport = Exclude<BrokerTransportSetting, "auto">;
 export const BROKER_ROUTES = {
   names: "/v1/names",
   read: "/v1/read",
+  /** `POST`: starts a review run of a box's own branch. See `BrokerReviewStartRequestSchema`. */
+  reviewStart: "/v1/review/start",
+  /**
+   * `GET /v1/review/runs/RUN_ID?boxId=BOX_ID`: the run that box started,
+   * with its findings. See `BrokerReviewRunResponseSchema`.
+   */
+  reviewRuns: "/v1/review/runs",
 } as const;
 
 /** The most names one read request can ask for. */
@@ -108,13 +118,50 @@ export const BrokerReadResponseSchema = z.object({
 export type BrokerReadResponse = z.infer<typeof BrokerReadResponseSchema>;
 
 /**
+ * The body of `POST /v1/review/start`: a review run of the box's own branch,
+ * in the project whose container sent the request. The server takes the
+ * project from the socket or token, and the repository and branch from the
+ * box's record, and refuses a box of another project or another branch.
+ */
+export const BrokerReviewStartRequestSchema = z
+  .object({
+    /** The asking box: `AIO_BOX_ID` in its session. */
+    boxId: z.string().min(1).max(200),
+    /**
+     * The branch to review. It must be the box's own branch; absent means
+     * that branch, or for a box without one, its checked-out branch.
+     */
+    branch: z.string().min(1).max(500).optional(),
+    /** The base ref, as for `runs.create`. Default: `origin/main`. */
+    base: z.string().min(1).max(500).optional(),
+    /** Review without fixing. Default: false. */
+    readOnly: z.boolean().optional(),
+    profile: ProfileSchema.optional(),
+    depth: RunDepthSchema.optional(),
+  })
+  .strict();
+export type BrokerReviewStartRequest = z.infer<typeof BrokerReviewStartRequestSchema>;
+
+/** The response of `GET /v1/review/runs/RUN_ID`: the run and its findings. */
+export const BrokerReviewRunResponseSchema = z.object({
+  run: RunStateSchema,
+  findings: z.array(FindingSchema),
+});
+export type BrokerReviewRunResponse = z.infer<typeof BrokerReviewRunResponseSchema>;
+
+/**
  * The error codes the broker returns: `not_found` for a name the project
- * doesn't list, `secrets_locked` and `secrets_unavailable` as in the server
- * API, `validation` for a malformed request, `unauthorized` for a TCP
- * request without the right bearer token, and `internal`.
+ * doesn't list or a box outside the project, `secrets_locked` and
+ * `secrets_unavailable` as in the server API, `validation` for a malformed
+ * request or another branch, `unauthorized` for a TCP request without the
+ * right bearer token, `run_not_found`, `conflict`, and `engine_mismatch` for
+ * a review request the project's engine can't take, and `internal`.
  */
 export const BrokerErrorCodeSchema = ApiErrorCodeSchema.extract([
   "not_found",
+  "run_not_found",
+  "conflict",
+  "engine_mismatch",
   "unauthorized",
   "secrets_locked",
   "secrets_unavailable",

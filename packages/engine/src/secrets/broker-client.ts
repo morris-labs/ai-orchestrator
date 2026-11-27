@@ -1,8 +1,9 @@
 // A client of the secrets broker: the Unix socket the server mounts into
 // each project container, or under Docker Desktop, a TCP listener on the
 // host that checks a bearer token (see `docs/secrets.md`). The engine uses
-// it to get the credentials it hands vendor CLIs and `git`, and the
-// `aio-secret` command wraps it for everything else in the container.
+// it to get the credentials it hands vendor CLIs and `git`, the
+// `aio-secret` command wraps it for everything else in the container, and
+// the `aio-box-review` command uses its review routes.
 //
 // This module imports only Node built-ins and the contracts, so the
 // `aio-secret` command starts fast.
@@ -16,6 +17,11 @@ import {
   BROKER_URL_PATH,
   BrokerNamesResponseSchema,
   BrokerReadResponseSchema,
+  BrokerReviewRunResponseSchema,
+  RunStateSchema,
+  type BrokerReviewRunResponse,
+  type BrokerReviewStartRequest,
+  type RunState,
 } from "@aio/contracts";
 
 /**
@@ -29,6 +35,8 @@ import {
  * - `secrets_locked`, `secrets_unavailable`: 1Password is locked, or a
  *   reference doesn't resolve.
  * - `protocol`: the broker answered with something this client can't read.
+ * - `run_not_found`, `conflict`, `engine_mismatch`: the server can't find
+ *   or start the box's review run.
  * - `validation`, `internal`: the broker refused the request or failed.
  */
 export type BrokerClientErrorCode =
@@ -38,6 +46,9 @@ export type BrokerClientErrorCode =
   | "secrets_locked"
   | "secrets_unavailable"
   | "protocol"
+  | "run_not_found"
+  | "conflict"
+  | "engine_mismatch"
   | "validation"
   | "internal";
 
@@ -55,6 +66,9 @@ const BROKER_CODES = new Set<BrokerClientErrorCode>([
   "not_found",
   "secrets_locked",
   "secrets_unavailable",
+  "run_not_found",
+  "conflict",
+  "engine_mismatch",
   "validation",
   "internal",
 ]);
@@ -224,6 +238,26 @@ export class BrokerClient {
     return Object.fromEntries(unique.map((n) => [n, parsed.data.values[n]!]));
   }
 
+  /**
+   * Starts a review run of the box's own branch. The server takes the
+   * project from this container and refuses another box or branch.
+   */
+  async startReview(request: BrokerReviewStartRequest): Promise<RunState> {
+    const body = await this.call("POST", BROKER_ROUTES.reviewStart, request);
+    const parsed = RunStateSchema.safeParse(body);
+    if (!parsed.success) throw this.protocolError();
+    return parsed.data;
+  }
+
+  /** The run `runId` that box `boxId` started, with its findings. */
+  async reviewRun(runId: string, boxId: string): Promise<BrokerReviewRunResponse> {
+    const route = `${BROKER_ROUTES.reviewRuns}/${encodeURIComponent(runId)}?boxId=${encodeURIComponent(boxId)}`;
+    const body = await this.call("GET", route);
+    const parsed = BrokerReviewRunResponseSchema.safeParse(body);
+    if (!parsed.success) throw this.protocolError();
+    return parsed.data;
+  }
+
   private protocolError(): BrokerError {
     return new BrokerError(
       "protocol",
@@ -272,7 +306,7 @@ export class BrokerClient {
               reject(this.protocolError());
               return;
             }
-            if (res.statusCode === 200) {
+            if (res.statusCode === 200 || res.statusCode === 201) {
               resolve(body);
               return;
             }

@@ -388,6 +388,18 @@ class ImageTest(unittest.TestCase):
         self.assertEqual(package["bin"]["aio-build"], "./dist/build-main.js")
         self.assertTrue((ROOT / "packages/engine/src/build-main.ts").is_file())
 
+    def test_box_review_client_in_image(self):
+        # The image installs the aio-box-review command from the engine's
+        # own package.json bin, like aio-build.
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        self.assertIn("bin['aio-box-review']", engine_step)
+        self.assertIn("> /usr/local/bin/aio-box-review", engine_step)
+        self.assertIn("chmod 0755 /usr/local/bin/aio-box-review", engine_step)
+        package = json.loads((ROOT / "packages/engine/package.json").read_text())
+        self.assertEqual(package["bin"]["aio-box-review"], "./dist/box-review-main.js")
+        self.assertTrue((ROOT / "packages/engine/src/box-review-main.ts").is_file())
+
     def test_engine_wrappers_check_their_bin_entries(self):
         # Runs the Dockerfile's bin lookups against a package without the
         # bins: each lookup must fail the build rather than write a wrapper
@@ -408,6 +420,7 @@ class ImageTest(unittest.TestCase):
             "engine_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-engine": "./missing.js"}}],
             "secret_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-secret": "./missing.js"}}],
             "build_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-build": "./missing.js"}}],
+            "review_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-box-review": "./missing.js"}}],
         }
         with tempfile.TemporaryDirectory() as tmp:
             pkg = pathlib.Path(tmp)
@@ -420,7 +433,12 @@ class ImageTest(unittest.TestCase):
                     result = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0, f"{var}: {package}")
                     self.assertIn("bin", result.stderr)
-                good = {"engine_bin": "aio-engine", "secret_bin": "aio-secret", "build_bin": "aio-build"}[var]
+                good = {
+                    "engine_bin": "aio-engine",
+                    "secret_bin": "aio-secret",
+                    "build_bin": "aio-build",
+                    "review_bin": "aio-box-review",
+                }[var]
                 (pkg / "package.json").write_text(json.dumps({"bin": {good: "./dist/main.js"}}))
                 subprocess.run(["sh", "-c", script], check=True, capture_output=True)
 

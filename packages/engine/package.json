@@ -9,7 +9,8 @@
   "bin": {
     "aio-engine": "./dist/main.js",
     "aio-secret": "./dist/secret-main.js",
-    "aio-build": "./dist/build-main.js"
+    "aio-build": "./dist/build-main.js",
+    "aio-box-review": "./dist/box-review-main.js"
   },
   "exports": {
     ".": {
