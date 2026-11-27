@@ -190,6 +190,7 @@ export const planningRecord: BuildPlanning = {
   frozen: [],
   meetings: [],
   recommendation: null,
+  questions: [],
   createdAt: "2026-11-23T09:00:00.000Z",
   updatedAt: "2026-11-23T09:05:00.000Z",
 };

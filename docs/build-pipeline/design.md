@@ -129,6 +129,16 @@ rest:
 It skips the Contracts step, tests first, and the Scribe. Usage is recorded
 by seat and step as in a pipeline build, so the two flows compare over time.
 
+### Default planning answers
+
+The Analyst lists each open question with a recommended answer and a flag
+for whether another answer would change an acceptance criterion. The
+Project manager asks the owner only the flagged questions. For every other
+question, the draft plan takes the recommended answer and lists it in the
+build plan's `defaultedAnswers` field, which the planning status file and
+each hand-off show. The owner can still overrule a defaulted answer, and
+plan approval stays the owner's decision.
+
 ## Team
 
 The following sections list the roles. Each role is a Markdown file with YAML

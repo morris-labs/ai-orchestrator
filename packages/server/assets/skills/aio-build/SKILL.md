@@ -104,9 +104,11 @@ The team path, in order:
 1. Analyst: write the brief in your own words, then
    `aio-build plan SLUG analyst BRIEF_FILE [--issue OWNER/NAME#NUMBER]`.
    Show the owner the spec: criteria, size, usage estimate, secrets,
-   services, and the recommended flow (see "Recommend the flow"). Rerun the
-   seat with a brief of the owner's changes until the owner accepts the
-   spec. When the Analyst's size is small, offer the owner the small path.
+   services, the recommended flow (see "Recommend the flow"), and the
+   questions that change a criterion (see "Ask only what changes a
+   criterion"). Rerun the seat with a brief of the owner's changes and
+   answers until the owner accepts the spec. When the Analyst's size is
+   small, offer the owner the small path.
 2. Architect: `aio-build plan SLUG architect BRIEF_FILE`. Show the
    milestones and the task graph.
 3. Critic: `aio-build meet SLUG BRIEF_FILE`, where the brief says what to
@@ -121,6 +123,28 @@ The team path, in order:
    every seat answer, unless you edited it: then it keeps your edits and
    writes its own draft to `planning/draft.engine.json`. To change the plan
    by hand, edit the draft or a copy of it, and freeze that file.
+
+### Ask only what changes a criterion
+
+The Analyst's spec has `questions`: each open question with a
+`recommendedAnswer` and a `changesCriterion` flag. The flag is true when
+another answer would add, remove, or change an acceptance criterion.
+
+- Ask the owner every question whose `changesCriterion` is true, with the
+  recommended answer, so the owner can take it in one word.
+- Don't ask the others. The engine takes their recommended answers and
+  lists them under `defaultedAnswers` in the draft plan; show them to the
+  owner as one list under "Defaulted answers", so the owner can still
+  overrule one.
+- When the owner overrules a defaulted answer, or answers a question with
+  "use your best judgement", rerun the Analyst with a brief of the answer,
+  or edit `defaultedAnswers` in the draft to match.
+
+The build's `STATUS.md` file lists both groups during planning, and the
+hand-off files list the defaulted answers. On the small path, you write the
+plan yourself: settle with the owner only what changes a criterion, and
+list your other assumptions in the plan's `defaultedAnswers`, each as a
+`question` and an `answer`. Plan approval stays the owner's decision.
 
 ### Recommend the flow
 
@@ -190,18 +214,27 @@ waits in `aio-build inbox SLUG`.
 
 At each milestone end, the engine writes the milestone's digest and then a
 hand-off file, `handoffs/milestone-ID.md`, and sends a pointer for each.
-The hand-off pointer starts with `Start a fresh Project manager session
-from this hand-off file`. When it arrives:
+The digest pointer arrives first: report it to the owner, and triage every
+escalation the inbox lists, as for any other item.
 
-1. Finish what waits before it: report the milestone's digest to the
-   owner, and triage every escalation the inbox lists.
-2. Tell the owner the milestone is done and what comes next, and ask them
-   to type `/clear` in this session once it's idle. The cleared session
-   loads this skill with the next pointer, and section 2 recovers the build
-   from the newest hand-off file.
-3. Until the session is cleared, work from the hand-off file as if it were
-   fresh: take the plan state, escalations, decisions, and usage from it,
-   not from earlier turns.
+The server clears your session for the hand-off: once the session is idle
+at its prompt, the server types `/clear`, and then the hand-off pointer,
+which starts with `Start a fresh Project manager session from this hand-off
+file`. So the pointer arrives in a fresh session, without the owner's help.
+When it arrives:
+
+1. Recover the build with section 2. It starts from the hand-off file that
+   the pointer names, the newest one.
+2. Tell the owner the milestone is done and what comes next. Put again any
+   question that the hand-off lists as an open escalation: the owner's
+   earlier conversation with you is gone.
+3. Take the plan state, escalations, decisions, and usage from the
+   hand-off file, not from memory.
+
+Don't ask the owner to type `/clear`. A hand-off pointer that arrives in a
+session with earlier turns, such as one that `aio-build inbox SLUG` lists
+after a missed delivery, still counts: work from the hand-off file as if
+the session were fresh.
 
 The hand-off routine is done when the owner knows the milestone result and
 nothing in `aio-build inbox SLUG` waits for your answer.

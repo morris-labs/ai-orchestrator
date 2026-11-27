@@ -7,9 +7,11 @@ import {
   escalationState,
   type BuildContractsProgress,
   buildFlowText,
+  defaultedAnswers,
   type BuildMeeting,
   type BuildPlan,
   type BuildPlanning,
+  type BuildQuestion,
   type BuildState,
   type FlowRecommendation,
 } from "@aio/contracts";
@@ -20,6 +22,35 @@ function recommendationLines(recommendation: FlowRecommendation | null | undefin
   const risk = recommendation.highRisk ? "high-risk" : "not high-risk";
   return [
     `- Recommended flow: ${buildFlowText(recommendation.flow)} (${risk}). ${cell(recommendation.reason)}`,
+  ];
+}
+
+/**
+ * The Analyst's questions: the ones the Project manager asks the owner, and
+ * the ones it answers with the recommended answer. None for a spec without
+ * questions.
+ */
+function questionLines(questions: readonly BuildQuestion[]): string[] {
+  if (questions.length === 0) return [];
+  const ask = questions.filter((q) => q.changesCriterion);
+  const defaulted = defaultedAnswers(questions);
+  return [
+    "## Questions for the owner",
+    "",
+    "Their answers can change an acceptance criterion, so ask the owner each one.",
+    "",
+    ...(ask.length === 0
+      ? ["None."]
+      : ask.map((q) => `- ${cell(q.question)} Recommended: ${cell(q.recommendedAnswer)}`)),
+    "",
+    "## Defaulted answers",
+    "",
+    "The draft plan takes the Analyst's recommended answer for each of these.",
+    "",
+    ...(defaulted.length === 0
+      ? ["None."]
+      : defaulted.map((a) => `- ${cell(a.question)} Defaulted to: ${cell(a.answer)}`)),
+    "",
   ];
 }
 
@@ -112,6 +143,7 @@ export function renderPlanningStatus(
     ...recommendationLines(planning.recommendation),
     `- Updated: ${planning.updatedAt}`,
     "",
+    ...questionLines(planning.questions),
     "## Planning calls",
     "",
     ...(planning.calls.length === 0

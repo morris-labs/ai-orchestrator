@@ -7,7 +7,9 @@
 //
 // A stopped box leaves its items waiting, without an error. So does a
 // session that can't take a message now, such as one that shows a dialog;
-// see `boxes/delivery.ts`. An item counts as delivered once the session's
+// see `boxes/delivery.ts`. A hand-off pointer goes into a cleared session:
+// the server clears an idle session first, so the owner doesn't have to.
+// An item counts as delivered once the session's
 // transcript shows it, and the transcript's copy keeps a later attempt
 // from typing it twice.
 import {
@@ -146,6 +148,9 @@ export class PmDelivery {
     const result = await this.deps.boxes.deliver(boxId, {
       text: pmPointer(build.slug, item),
       marker: pmMarker(build.slug, item.id),
+      // A hand-off starts a fresh Project manager session, so the server
+      // clears the session first instead of asking the owner to.
+      ...(item.kind === "handoff" ? { clear: true } : {}),
     });
     if (!result.delivered) {
       // A stopped box isn't worth a line: its start sweeps again.

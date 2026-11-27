@@ -505,3 +505,95 @@ describe("the recommended flow", () => {
     expect(world.file(SLUG, "STATUS.md")).toContain("- Flow: single session");
   });
 });
+
+describe("default planning answers", () => {
+  /** A question whose answer leaves the criteria alone, and one whose answer changes AC1. */
+  const QUESTIONS = [
+    {
+      question: "Which currency does the total use?",
+      recommendedAnswer: "The prices' own unit, with no conversion.",
+      changesCriterion: false,
+    },
+    {
+      question: "Does the total include tax?",
+      recommendedAnswer: "No: the cart sums the item prices only.",
+      changesCriterion: true,
+    },
+  ];
+
+  async function questionsWorld(): Promise<BuildWorld> {
+    const world = await planningWorld();
+    world.script({
+      claude: [
+        { match: "You are the Analyst", output: { ...SPEC, questions: QUESTIONS } },
+        { match: "You are the Architect", output: DESIGN },
+        { match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } },
+      ],
+    });
+    return world;
+  }
+
+  it("defaults the answers that change no criterion and leaves the rest for the owner", async () => {
+    const world = await questionsWorld();
+    await plan(world);
+
+    const draft = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "planning/draft.json")));
+    expect(draft.defaultedAnswers).toEqual([
+      { question: QUESTIONS[0]!.question, answer: QUESTIONS[0]!.recommendedAnswer },
+    ]);
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.questions).toEqual(QUESTIONS);
+    const status = world.file(SLUG, "STATUS.md");
+    expect(status).toMatch(
+      /## Questions for the owner\n\n.*\n\n- Does the total include tax\? Recommended: No: the cart sums/,
+    );
+    expect(status).toMatch(
+      /## Defaulted answers\n\n.*\n\n- Which currency does the total use\? Defaulted to: The prices' own unit/,
+    );
+    // The Analyst hears that each question needs a recommended answer and a criterion flag.
+    const analystPrompt = world.calls().find((c) => c.prompt.includes("You are the Analyst"));
+    expect(analystPrompt?.prompt).toContain("recommendedAnswer");
+    expect(analystPrompt?.prompt).toContain("changesCriterion");
+  });
+
+  it("keeps the defaulted answers in the frozen plan that the build runs", async () => {
+    const world = await questionsWorld();
+    await plan(world);
+    await world.manager.freeze(freeze({ push: false }));
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    await world.settle(SLUG);
+
+    const frozen = BuildPlanSchema.parse(JSON.parse(world.file(SLUG, "plan.json")));
+    expect(frozen.defaultedAnswers).toEqual([
+      { question: QUESTIONS[0]!.question, answer: QUESTIONS[0]!.recommendedAnswer },
+    ]);
+  });
+
+  it("drafts no defaulted answers from a spec without questions", async () => {
+    const world = await planningWorld();
+    await plan(world);
+
+    const draft = JSON.parse(world.file(SLUG, "planning/draft.json")) as Record<string, unknown>;
+    expect(draft).not.toHaveProperty("defaultedAnswers");
+    expect(world.file(SLUG, "STATUS.md")).not.toContain("Questions for the owner");
+  });
+
+  it("fails an Analyst answer with a question that lacks a recommended answer", async () => {
+    const world = await planningWorld();
+    world.script({
+      claude: [
+        {
+          match: "You are the Analyst",
+          output: {
+            ...SPEC,
+            questions: [{ question: "Which currency?", changesCriterion: false }],
+          },
+        },
+      ],
+    });
+    await expect(world.manager.plan(seat("analyst"))).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/questions\.0\.recommendedAnswer/),
+    });
+  });
+});
