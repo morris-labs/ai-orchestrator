@@ -215,7 +215,11 @@ export interface BuildWorld {
   restart(): Promise<void>;
   /** Waits until the build's state satisfies `done`. */
   waitFor(slug: string, done: (state: BuildState) => boolean, ms?: number): Promise<BuildState>;
-  /** Waits until the build stops running and its last `build.changed` event shows it. */
+  /**
+   * Waits until the build stops running and its last `build.changed` event
+   * shows it, or, when this manager sent no event for the build, until it
+   * stops running.
+   */
   settle(slug: string): Promise<BuildState>;
   /** The build's directory. */
   dir(slug: string): string;
@@ -342,9 +346,12 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
       // The build's state changes before its `build.changed` event goes out,
       // and the event reaches `events.jsonl` after the stream, so a settled
       // build is one whose last event shows the same status and whose file
-      // holds every `build.changed` event the stream sent.
+      // holds every `build.changed` event the stream sent. A restarted
+      // manager sends no event for a build that stays waiting, so a build
+      // with no event in this manager's stream settles on its status alone.
       return world.waitFor(slug, (s) => {
         const sent = current.events.ofType("build.changed").filter((e) => e.build.id === s.id);
+        if (sent.length === 0) return s.status !== "running";
         const shown = sent.at(-1)?.build;
         const file = join(dir(slug), "events.jsonl");
         const saved = existsSync(file)
