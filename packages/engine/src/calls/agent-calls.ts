@@ -21,6 +21,7 @@ import {
   type Clock,
   type LeaseActual,
   type LimitInfo,
+  type RawUsageSample,
   type VendorAdapter,
 } from "../core.js";
 import { TreeGuard } from "../state/tree-guard.js";
@@ -41,6 +42,7 @@ import type {
   CallDeps,
   CallState,
   CallWork,
+  FailedCallRecord,
   VendorLimit,
 } from "./types.js";
 
@@ -85,6 +87,16 @@ function usageOfError(error: unknown): UsageSample[] {
  * The tokens a failed call spent before it failed, from the adapter's
  * error, or none when the adapter couldn't tell.
  */
+/** What a call whose CLI finished spent, from the adapter's result. */
+function actualOf(result: AdapterResult<unknown>): LeaseActual {
+  return {
+    tokens: { ...result.tokens },
+    premiumRequests: result.premiumRequests,
+    ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
+    costEstimate: result.costEstimate,
+  };
+}
+
 function tokensOfError(error: unknown): LeaseActual["tokens"] {
   const tokens = (error as { tokens?: Record<string, unknown> } | null)?.tokens;
   if (!tokens || typeof tokens.input !== "number" || typeof tokens.output !== "number")
@@ -747,11 +759,18 @@ export class AgentCalls {
         const headBefore =
           spec.request.toolPolicy === "write" && host.commits ? await host.commits.head() : null;
         let result: AdapterResult<T>;
+        // The adapter's result when the CLI finished, though a check after it,
+        // such as the read-only guard's, can still fail the call.
+        let produced: AdapterResult<T> | undefined;
+        const invoke = async (): Promise<AdapterResult<T>> => {
+          produced = await this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort);
+          return produced;
+        };
         try {
           result =
             spec.request.toolPolicy === "read-only"
               ? await this.treeGuardFor(spec.request.repoPath).run(
-                  () => this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort),
+                  invoke,
                   (message) =>
                     log?.warn("A failed read-only call changed the worktree", {
                       runId: host.id,
@@ -760,14 +779,18 @@ export class AgentCalls {
                       error: message,
                     }),
                 )
-              : await this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort);
+              : await invoke();
         } catch (error) {
+          const finished = produced as AdapterResult<T> | undefined;
           const elapsedMs = Math.max(0, this.clock.now() - started);
           // The caller's cancel, or this call's own stop.
           const stopped = this.signal.aborted || spec.signal?.aborted === true;
           const limit = stopped ? null : adapter.detectLimit(error);
           // A failed or limited call can still hold the vendor's freshest reading.
-          for (const { ceiling: _ignored, ...sample } of usageOfError(error)) {
+          const samples: RawUsageSample[] = finished
+            ? finished.usage
+            : usageOfError(error).map(({ ceiling: _ignored, ...sample }) => sample);
+          for (const sample of samples) {
             const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
             await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });
           }
@@ -778,39 +801,34 @@ export class AgentCalls {
               : error instanceof CallTimeout
                 ? "timeout"
                 : "error";
-          // A failed call still spent what it used before it failed.
-          const spent: LeaseActual = { ...ZERO_USE, tokens: tokensOfError(error) };
+          // A failed call still spent what it used before it failed. A call
+          // whose CLI finished spent all of its result's usage.
+          const spent: LeaseActual = finished
+            ? actualOf(finished)
+            : { ...ZERO_USE, tokens: tokensOfError(error) };
           await host.emit({
             type: "agent.finished",
             ...common,
             outcome,
             elapsedMs,
             tokens: spent.tokens,
-            premiumRequests: 0,
-            costEstimate: 0,
+            premiumRequests: spent.premiumRequests,
+            ...(spent.aiCredits !== undefined ? { aiCredits: spent.aiCredits } : {}),
+            costEstimate: spent.costEstimate,
           });
           await settleLease(spent);
-          try {
-            await host.cache.failed?.({
-              key: spec.key,
-              agentId,
-              vendor,
-              model,
-              ...(spec.seat !== undefined ? { seat: spec.seat } : {}),
-              ...(spec.step !== undefined ? { step: spec.step } : {}),
-              outcome,
-              error: describeError(error),
-              tokens: spent.tokens,
-              elapsedMs,
-            });
-          } catch (recordError) {
-            // The call's own failure says more than this one.
-            log?.warn("Could not save a failed call's record", {
-              runId: host.id,
-              agentId,
-              error: describeError(recordError),
-            });
-          }
+          await this.recordFailed({
+            key: spec.key,
+            agentId,
+            vendor,
+            model,
+            ...(spec.seat !== undefined ? { seat: spec.seat } : {}),
+            ...(spec.step !== undefined ? { step: spec.step } : {}),
+            outcome,
+            error: describeError(error),
+            tokens: spent.tokens,
+            elapsedMs,
+          });
           if (outcome === "cancelled") throw new RunCancelled();
           log?.warn("An agent call failed", {
             runId: host.id,
@@ -852,12 +870,7 @@ export class AgentCalls {
           continue;
         }
         const elapsedMs = Math.max(0, this.clock.now() - started);
-        const actual: LeaseActual = {
-          tokens: { ...result.tokens },
-          premiumRequests: result.premiumRequests,
-          ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
-          costEstimate: result.costEstimate,
-        };
+        const actual = actualOf(result);
         unsettled = actual;
         // A CLI default or an alias can resolve to a blocked model; the call
         // stops here, before anything uses the answer.
@@ -881,6 +894,18 @@ export class AgentCalls {
         if (blocked) {
           const message = blockedModelMessage(vendor, result.model);
           const undone = headBefore ? await this.undoCommits(headBefore) : "";
+          await this.recordFailed({
+            key: spec.key,
+            agentId,
+            vendor,
+            model: result.model,
+            ...(spec.seat !== undefined ? { seat: spec.seat } : {}),
+            ...(spec.step !== undefined ? { step: spec.step } : {}),
+            outcome: "error",
+            error: `${message}${undone}`,
+            tokens: actual.tokens,
+            elapsedMs,
+          });
           throw new AgentFailed(spec.role, vendor, `${message}${undone}`);
         }
         const outcome: AgentOutcome<T> = {
@@ -909,6 +934,20 @@ export class AgentCalls {
           }
         }
       }
+    }
+  }
+
+  /** Saves the record of a call that didn't finish, with what it spent. */
+  private async recordFailed(record: FailedCallRecord): Promise<void> {
+    try {
+      await this.host.cache.failed?.(record);
+    } catch (error) {
+      // The call's own failure says more than this one.
+      this.deps.log?.warn("Could not save a failed call's record", {
+        runId: this.host.id,
+        agentId: record.agentId,
+        error: describeError(error),
+      });
     }
   }
 

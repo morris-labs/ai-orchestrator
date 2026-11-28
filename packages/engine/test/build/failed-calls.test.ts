@@ -3,7 +3,7 @@
 // adapter from its stream; the call settles its lease with those tokens, and
 // the build writes a call record for it. The mock Codex CLI writes its
 // rollouts in a temporary account folder, never in the real `~/.codex`.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BUILD_PIPELINE } from "../../src/build/index.js";
@@ -144,5 +144,60 @@ describe("a Claude call that the engine stops", () => {
       }),
     ]);
     expect(usageBySeatAndStep(world, "cart-stopped")["developer/tasks"]).toEqual([3000, 40]);
+  });
+});
+
+describe("a read-only call that changes the checkout", () => {
+  it("records the tokens the call spent, though its answer came back", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [
+        {
+          match: "You are the Analyst",
+          output: { title: "Cart" },
+          delayMs: 1500,
+          tokens: { input: 6000, output: 80 },
+        },
+      ],
+    });
+
+    const settled = world.manager
+      .plan({
+        projectId: "proj-shop",
+        boxId: "box-1",
+        slug: "cart-stray",
+        seat: "analyst",
+        brief: "Add a total to the cart.",
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    // Something else changes the checkout while each call runs, as another
+    // box's package install did in a measured build.
+    for (let n = 1; n <= 2; n += 1) {
+      const end = Date.now() + 20_000;
+      while (world.calls().length < n && Date.now() < end)
+        await new Promise((r) => setTimeout(r, 25));
+      writeFileSync(join(world.root, `stray-${n}.txt`), "left behind\n");
+    }
+    expect(String(await settled)).toMatch(/changed the worktree/);
+
+    const failed = world.jsonFiles("cart-stray", "calls/failed");
+    expect(failed.length).toBeGreaterThan(0);
+    for (const record of failed) {
+      expect(record).toMatchObject({
+        seat: "analyst",
+        step: "planning",
+        outcome: "error",
+        error: expect.stringContaining("changed the worktree"),
+        tokens: expect.objectContaining({ in: 6000, out: 80 }),
+      });
+    }
+    const leases = world.events.ofType("lease.settled");
+    expect(leases.length).toBe(failed.length);
+    for (const event of leases) {
+      expect(event).toMatchObject({ tokens: expect.objectContaining({ in: 6000, out: 80 }) });
+    }
   });
 });
