@@ -700,7 +700,8 @@ To limit how many findings go to a disprover, set a verification floor. The
 floor is the lowest severity that a disprover checks. The severities, from the
 strongest, are `P1`, `P2`, `P3`, and `nit`. No severity ranks above `P1`. With
 no floor, a disprover checks every severity. The `standard` [depth](#depth) sets a
-floor of `P2` unless you name another.
+floor of `P2` unless you name another. A build's review run always has no
+floor (the `nit` floor), so it fixes every confirmed finding.
 
 Set the floor in the **Verification** section of the run launcher, or pass
 `--verify-floor` to `aio review start`:

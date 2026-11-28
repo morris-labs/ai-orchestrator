@@ -172,6 +172,76 @@ describe("the review step", () => {
     expect(runLeases.every((r) => r.buildId === started.id)).toBe(true);
   });
 
+  it("fixes a finding that its disprover confirmed at P3, below a standalone run's floor", async () => {
+    const world = await buildWorld({ review: true });
+    const fix: MockResponse = {
+      output: { fixed: ["F-0001"], notFixed: [], summary: "Counted the quantity." },
+      writeFiles: { "src/cart.mjs": CART_FIXED },
+      commit: "fix(cart): count item quantity (F-1)",
+    };
+    // The reviewer says P2, and the disprover ranks it P3 against the anchors.
+    const script = reviewers(fix).map((r) => {
+      const out = r.output as { verdicts?: Record<string, unknown>[] } | undefined;
+      return out?.verdicts
+        ? {
+            ...r,
+            output: {
+              ...out,
+              severity: "P3",
+              verdicts: out.verdicts.map((v) => ({ ...v, severity: "P3" })),
+            },
+          }
+        : r;
+    });
+    world.script({ claude: script, codex: script });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "paused" });
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    const run = await world.runs.get(runId);
+    expect(run).toMatchObject({ status: "finished", stopReason: "clean" });
+    const findings = await world.runs.findings(runId, {});
+    expect(findings).toEqual([
+      expect.objectContaining({ title: FLAW.title, severity: "P3", verdict: "fixed" }),
+    ]);
+    expect(world.git(world.root, "show", "build/cart-total:src/cart.mjs")).toBe(CART_FIXED.trim());
+  });
+
+  it("counts the tokens of a Codex reviewer's subagents into its call", async () => {
+    const home = tempDir("aio-codex-home-");
+    const world = await buildWorld({ review: true, accountDirs: { codex: () => home } });
+    const SUBAGENT = { tokens: { input: 7000, output: 30 } };
+    const codex = refusingReviewers().map((r) => ({
+      ...r,
+      tokens: { input: 1000, output: 10 },
+      subagents: [SUBAGENT],
+    }));
+    world.script({ claude: refusingReviewers(), codex });
+
+    await world.start("cart-total");
+    await world.settle("cart-total");
+
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    const finished = world.events
+      .ofType("agent.finished")
+      .filter((e) => e.runId === runId && e.vendor === "codex" && e.outcome === "ok");
+    expect(finished.length).toBeGreaterThan(0);
+    for (const e of finished) {
+      expect(e.tokens).toMatchObject({ in: 8000, out: 40 });
+    }
+    const rounds = JSON.parse(
+      readFileSync(join(world.root, RUNS_DIR, runId, "rounds.json"), "utf8"),
+    ) as Array<{ perVendor: Record<string, { tokensIn: number; tokensOut: number }> }>;
+    const codexIn = rounds.reduce((sum, r) => sum + (r.perVendor.codex?.tokensIn ?? 0), 0);
+    const failedIn = world.events
+      .ofType("agent.finished")
+      .filter((e) => e.runId === runId && e.vendor === "codex" && e.outcome !== "ok")
+      .reduce((sum, e) => sum + e.tokens.in, 0);
+    expect(codexIn).toBe(finished.length * 8000 + failedIn);
+  });
+
   it("starts its review run without a box, so no box gets a hold-edits message", async () => {
     const world = await buildWorld({ review: true });
     world.script({

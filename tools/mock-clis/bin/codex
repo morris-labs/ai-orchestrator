@@ -163,6 +163,15 @@ const total = {
 // call that fails or is stopped mid-turn still leaves what it spent there.
 if (process.env.CODEX_HOME)
   writeRollout(process.env.CODEX_HOME, threadId, response, turnTokens, total);
+// Like a large-tier model, the turn can spawn subagents: each writes a
+// rollout of its own that names this thread, with totals from zero.
+if (process.env.CODEX_HOME) {
+  for (const sub of response.subagents ?? []) {
+    const id = newId();
+    writeSessionMeta(process.env.CODEX_HOME, id, threadId);
+    writeRollout(process.env.CODEX_HOME, id, {}, sub.tokens, sub.tokens);
+  }
+}
 if (response.delayMs) await sleep(response.delayMs);
 if (response.stderr) process.stderr.write(response.stderr);
 
@@ -263,6 +272,25 @@ function usageOf(t) {
     reasoning_output_tokens: 0,
     total_tokens: t.input + t.output,
   };
+}
+
+/** Starts a subagent's rollout file with the `session_meta` line that names its parent thread. */
+function writeSessionMeta(home, thread, parent) {
+  const now = new Date();
+  const dir = rolloutDir(home, now);
+  mkdirSync(dir, { recursive: true });
+  const stamp = now.toISOString().slice(0, 19).replace(/:/g, "-");
+  const line = {
+    timestamp: now.toISOString(),
+    type: "session_meta",
+    payload: {
+      id: thread,
+      parent_thread_id: parent,
+      thread_source: "subagent",
+      source: { subagent: { thread_spawn: { parent_thread_id: parent, depth: 1 } } },
+    },
+  };
+  writeFileSync(join(dir, `rollout-${stamp}-${thread}.jsonl`), `${JSON.stringify(line)}\n`);
 }
 
 function writeRollout(home, thread, r, turn, total) {

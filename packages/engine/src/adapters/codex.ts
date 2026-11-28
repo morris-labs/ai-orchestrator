@@ -1,7 +1,17 @@
 // The Codex adapter: `codex exec --json`. The Codex CLI isn't installed where
 // this was written; the flags and event shapes it relies on come from the
 // Codex CLI's documentation and are checked against the sample fixtures.
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UsageSample, UsageWindow } from "@aio/contracts";
@@ -149,6 +159,7 @@ export class CodexAdapter extends CliAdapter {
       const before = beforeRollout ? codexRolloutTotals(beforeRollout) : undefined;
       const parser = new CodexStreamParser(before);
       const prompt = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
+      const startedMs = Date.now();
       const result = await runProcess({
         command: this.command,
         args: this.buildArgs(req, schemaFile),
@@ -171,11 +182,17 @@ export class CodexAdapter extends CliAdapter {
         ? codexRateLimitSamples(rollout, this.accountFor(req), this.ceiling)
         : [];
       for (const sample of usage) req.onUsage?.(sample);
+      // The thread's own counts leave out the subagents it spawned.
+      const subagents = sessionId
+        ? codexSubagentTokens(join(this.homeFor(req), "sessions"), sessionId, startedMs)
+        : undefined;
+      const withSubagents = (tokens: TokenCounts | undefined): TokenCounts | undefined =>
+        subagents ? (tokens ? addTokenCounts(tokens, subagents) : subagents) : tokens;
       // A failed or stopped call spent tokens too, so its error carries what
       // the rollout says it spent.
       const spent = (error: unknown): unknown => {
         if (error instanceof AdapterError)
-          error.tokens = failedCallTokens(rollout, before, summary.tokens);
+          error.tokens = withSubagents(failedCallTokens(rollout, before, summary.tokens));
         return error;
       };
       const failure = this.processFailure(result, req);
@@ -210,7 +227,7 @@ export class CodexAdapter extends CliAdapter {
         sessionId,
         model: actual ?? req.model ?? null,
         usage,
-        tokens: summary.tokens,
+        tokens: withSubagents(summary.tokens) ?? summary.tokens,
         toolErrors: summary.toolErrors,
         premiumRequests: 0,
         raw: result.stdout,
@@ -299,16 +316,22 @@ export interface CodexTotals {
 
 /**
  * Reads the thread's cumulative token counts from the last `token_count`
- * event in a rollout file, or `undefined` when the file holds none.
+ * event in a rollout file, or `undefined` when the file holds none. With
+ * `beforeMs`, only the events stamped before that time count.
  */
-export function codexRolloutTotals(rollout: string): CodexTotals | undefined {
+export function codexRolloutTotals(rollout: string, beforeMs?: number): CodexTotals | undefined {
   let totals: CodexTotals | undefined;
   for (const line of rollout.split("\n")) {
     if (!line.includes("total_token_usage")) continue;
     try {
       const entry = JSON.parse(line) as {
+        timestamp?: unknown;
         payload?: { type?: unknown; info?: { total_token_usage?: Record<string, unknown> } | null };
       };
+      if (beforeMs !== undefined) {
+        const at = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : NaN;
+        if (!(at < beforeMs)) continue;
+      }
       const usage = entry.payload?.info?.total_token_usage;
       if (entry.payload?.type === "token_count" && usage) {
         totals = {
@@ -492,6 +515,136 @@ export function codexRateLimitSamples(
   return samples;
 }
 
+/** The most of a rollout file's first line that `sessionMeta()` reads. */
+const SESSION_META_LIMIT = 4 * 1024 * 1024;
+
+/** The `session_meta` payload on a rollout file's first line, or `null`. */
+function sessionMeta(file: string): Record<string, unknown> | null {
+  let fd: number;
+  try {
+    fd = openSync(file, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const chunk = Buffer.alloc(64 * 1024);
+    while (size < SESSION_META_LIMIT) {
+      const n = readSync(fd, chunk, 0, chunk.length, size);
+      if (n === 0) break;
+      const end = chunk.subarray(0, n).indexOf(10);
+      chunks.push(Buffer.from(chunk.subarray(0, end === -1 ? n : end)));
+      size += n;
+      if (end !== -1) break;
+    }
+    const entry = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      type?: unknown;
+      payload?: Record<string, unknown>;
+    };
+    return entry.type === "session_meta" && entry.payload ? entry.payload : null;
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** The thread that spawned a subagent's rollout, from its `session_meta` payload, or `null`. */
+function subagentParent(meta: Record<string, unknown>): string | null {
+  if (meta.thread_source !== "subagent") return null;
+  return typeof meta.parent_thread_id === "string" ? meta.parent_thread_id : null;
+}
+
+/**
+ * The tokens that the subagents of thread `threadId` spent since `sinceMs`,
+ * or `undefined` when none did. A large-tier Codex call can spawn
+ * subagents: each writes a rollout of its own, with `thread_source:
+ * subagent` and the spawning thread's id in `parent_thread_id`, and token
+ * totals that start at zero. The thread's own totals leave them out. A
+ * subagent's subagents count too. Only rollout files written since
+ * `sinceMs` are read, and of each, only the part of its total after
+ * `sinceMs`, so a resumed call doesn't count an earlier call's subagents.
+ */
+export function codexSubagentTokens(
+  sessionsDir: string,
+  threadId: string,
+  sinceMs: number,
+): TokenCounts | undefined {
+  const candidates: { file: string; parent: string; id: string }[] = [];
+  for (const dir of recentDayDirs(sessionsDir)) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.startsWith("rollout-") || !name.endsWith(".jsonl")) continue;
+      const file = join(dir, name);
+      try {
+        if (statSync(file).mtimeMs < sinceMs) continue;
+      } catch {
+        continue;
+      }
+      const meta = sessionMeta(file);
+      const parent = meta ? subagentParent(meta) : null;
+      if (meta && parent && typeof meta.id === "string")
+        candidates.push({ file, parent, id: meta.id });
+    }
+  }
+  const threads = new Set([threadId]);
+  const counted = new Set<string>();
+  let total: CodexTotals | undefined;
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of candidates) {
+      if (counted.has(c.file) || !threads.has(c.parent)) continue;
+      counted.add(c.file);
+      threads.add(c.id);
+      grew = true;
+      let text: string;
+      try {
+        text = readFileSync(c.file, "utf8");
+      } catch {
+        continue;
+      }
+      const after = codexRolloutTotals(text);
+      if (!after) continue;
+      const before = codexRolloutTotals(text, sinceMs);
+      total ??= { input: 0, output: 0, cached: 0 };
+      total.input += Math.max(0, after.input - (before?.input ?? 0));
+      total.output += Math.max(0, after.output - (before?.output ?? 0));
+      total.cached += Math.max(0, after.cached - (before?.cached ?? 0));
+    }
+  }
+  if (!total || (total.input === 0 && total.output === 0)) return undefined;
+  const cached = Math.min(total.cached, total.input);
+  return {
+    input: total.input,
+    output: total.output,
+    // `input_tokens` includes `cached_input_tokens`, which are cache reads.
+    fresh: total.input - cached,
+    cacheWrite: 0,
+    cacheRead: cached,
+  };
+}
+
+/**
+ * `a` plus `b`. The sum keeps a breakdown only when both have one: without
+ * it, a breakdown would understate the fresh or cached tokens.
+ */
+export function addTokenCounts(a: TokenCounts, b: TokenCounts): TokenCounts {
+  const sum: TokenCounts = { input: a.input + b.input, output: a.output + b.output };
+  if (a.fresh === undefined || b.fresh === undefined) return sum;
+  return {
+    ...sum,
+    fresh: a.fresh + b.fresh,
+    cacheWrite: (a.cacheWrite ?? 0) + (b.cacheWrite ?? 0),
+    cacheRead: (a.cacheRead ?? 0) + (b.cacheRead ?? 0),
+  };
+}
+
 function windowFor(minutes: number): UsageWindow | null {
   if (minutes >= 240 && minutes <= 360) return "5h";
   if (minutes >= 9000 && minutes <= 11000) return "7d";
@@ -503,15 +656,7 @@ function windowFor(minutes: number): UsageWindow | null {
  * the newest day directories first and stopping after a week of them.
  */
 export function findRolloutFile(sessionsDir: string, threadId: string): string | null {
-  const days: string[] = [];
-  for (const year of listDirs(sessionsDir)) {
-    for (const month of listDirs(join(sessionsDir, year))) {
-      for (const day of listDirs(join(sessionsDir, year, month)))
-        days.push(join(sessionsDir, year, month, day));
-    }
-  }
-  days.sort().reverse();
-  for (const dir of days.slice(0, 7)) {
+  for (const dir of recentDayDirs(sessionsDir)) {
     let names: string[];
     try {
       names = readdirSync(dir);
@@ -522,6 +667,18 @@ export function findRolloutFile(sessionsDir: string, threadId: string): string |
     if (name) return join(dir, name);
   }
   return null;
+}
+
+/** The `sessions/YYYY/MM/DD` directories, newest first, at most a week of them. */
+function recentDayDirs(sessionsDir: string): string[] {
+  const days: string[] = [];
+  for (const year of listDirs(sessionsDir)) {
+    for (const month of listDirs(join(sessionsDir, year))) {
+      for (const day of listDirs(join(sessionsDir, year, month)))
+        days.push(join(sessionsDir, year, month, day));
+    }
+  }
+  return days.sort().reverse().slice(0, 7);
 }
 
 function listDirs(dir: string): string[] {

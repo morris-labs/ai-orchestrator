@@ -168,7 +168,8 @@ the owner chooses the flow; never assume it.
 A single-session build runs preflight, then one Developer session against
 the approved criteria, with the task gate after each task, then one review
 run on the whole diff. The build starts that review run itself, so don't
-start one with `aio-box-review`. The review run's confirmed findings go
+start one with `aio-box-review`. The review run has no verification
+floor, so it fixes every confirmed finding, P3 included. Its confirmed findings go
 back to that same Developer session, and the build ends release ready. It skips the
 Contracts step, tests first, and the Scribe, so it locks no tests and
 writes no decision records, glossary entries, or changelog entry: the

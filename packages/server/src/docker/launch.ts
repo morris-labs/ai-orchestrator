@@ -23,6 +23,7 @@ import {
 } from "@aio/contracts";
 import { ApiError } from "../records/errors.js";
 import { RESERVED_ENV_NAMES } from "../records/settings.js";
+import { NOTES_DIR_NAME } from "../worktrees/worktrees.js";
 import {
   bindOf,
   bindSource,
@@ -356,6 +357,15 @@ export function buildLaunchSpec(
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
   if (facts.hasGitconfig) envList.push(`GIT_CONFIG_GLOBAL=${containerDir}/gitconfig`);
+  // The project root is a mount of its own, on another file system than the
+  // container's home, so pnpm can't link from its default store and puts
+  // one at the mount's root: the main checkout, where it shows as untracked
+  // files and fails the engine's read-only check. The notes folder is on the
+  // same mount, so pnpm still links, and git ignores it through
+  // `info/exclude`. pnpm 10 and earlier read the `npm_config_` name, and
+  // later versions the `pnpm_config_` one.
+  const pnpmStore = `${containerDir}/${NOTES_DIR_NAME}/pnpm-store`;
+  envList.push(`npm_config_store_dir=${pnpmStore}`, `pnpm_config_store_dir=${pnpmStore}`);
   // The engine token is not in this list: `writeEngineTokenFile()` puts it in
   // the state directory, out of reach of the environment `docker exec`
   // passes to every session.
