@@ -31,6 +31,7 @@ import {
   type TestBaseline,
 } from "./baseline.js";
 import { isPathGlob, pathMatcher } from "./paths.js";
+import { ASSERTION_PATTERNS, ERROR_PATTERNS } from "./red-check.js";
 import { listedTestCommand, requireTests } from "./test-command.js";
 import { checkLock, type LockCheck, type TestLock } from "./test-lock.js";
 import type { BuildWorktree } from "./worktree.js";
@@ -126,10 +127,52 @@ export interface TaskGateOptions {
   timeoutMs?: number;
 }
 
+/** A test runner's message for a run that found no test files, such as Vitest's or Jest's. */
+const NO_TEST_FILES_PATTERNS: readonly RegExp[] = [
+  /\bNo test files found\b/i,
+  /\bNo tests found\b/,
+  /^=+ no tests ran in\b/m,
+];
+
+/**
+ * Output that shows a test that ran and failed, or a test file that didn't
+ * load, across the common runners: count lines, per-test failure lines,
+ * assertion errors, and the load errors that the red check knows.
+ */
+const FAILED_TEST_PATTERNS: readonly RegExp[] = [
+  ...ASSERTION_PATTERNS,
+  ...ERROR_PATTERNS.filter((re) => !re.test("No test files found")),
+  /\b(?:Test Files|Tests|Suites|Test Suites):?\s+\d+ failed\b/,
+  /^\s*(?:\S+ \S+: )?(?:FAIL|FAILED)\s+\S/m,
+  /^\s*(?:\S+ \S+: )?not ok \d+/m,
+  /^\s*(?:\S+ \S+: )?# fail [1-9]/m,
+  /^\s*(?:\S+ \S+: )?\d+ failing\b/m,
+  /^=+ .*\b\d+ (?:failed|errors?)\b/m,
+];
+
+/** The excuse line of a test command that failed only for want of test files. */
+export const NO_TEST_FILES_EXCUSE = "no test files were left after the set-aside";
+
+/**
+ * True when a failed test command found no test files and no test failed:
+ * after a set-aside, such a run fails because a package's tests all belong
+ * to later tasks, not because of the task under the gate.
+ */
+function failsOnlyForWantOfTests(result: GateCommandResult): boolean {
+  const text = result.output ?? result.outputTail;
+  return (
+    !result.timedOut &&
+    NO_TEST_FILES_PATTERNS.some((re) => re.test(text)) &&
+    !FAILED_TEST_PATTERNS.some((re) => re.test(text))
+  );
+}
+
 /**
  * Runs one test command, and once more when it fails on a test the baseline
  * doesn't excuse. Lines of the first run that the rerun doesn't have go in
  * `quarantined`. A per-test command (`listed`) that runs no tests fails.
+ * When the gate set test files aside (`asideCount`), a run that failed only
+ * because it found no test files passes.
  */
 async function runTestCommand(
   cmd: PolicyCommand,
@@ -137,16 +180,20 @@ async function runTestCommand(
   baseline: TestBaseline,
   protect: readonly string[],
   listed = false,
+  asideCount = 0,
 ): Promise<TaskGateCommand> {
   const excused = excusedFailures(baseline, cmd);
   const once = async () => {
-    const result = await runGateCommand("test", cmd, run);
+    const result = await runGateCommand("test", cmd, { ...run, keepOutput: asideCount > 0 });
     return listed ? requireTests(result) : result;
   };
   const first = await once();
   if (first.passed) return first;
   if (failsOnlyOnBaseline(first, excused, protect)) {
     return { ...first, passed: true, excused: testFailures(first) };
+  }
+  if (!listed && asideCount > 0 && failsOnlyForWantOfTests(first)) {
+    return { ...first, passed: true, excused: [NO_TEST_FILES_EXCUSE] };
   }
   if (run.signal?.aborted) return first;
   const rerun = await once();
@@ -297,7 +344,9 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
         deferred.push(cmd.command);
         continue;
       }
-      commands.push(await runTestCommand(cmd, timed, baseline, protect));
+      commands.push(
+        await runTestCommand(cmd, timed, baseline, protect, false, aside.paths.length),
+      );
     }
     // The tests that earlier tasks made pass, each by its own command, unless
     // a plan test command is the same command.
