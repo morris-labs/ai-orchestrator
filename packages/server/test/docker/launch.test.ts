@@ -98,17 +98,26 @@ describe("buildLaunchSpec", () => {
     ]);
   });
 
+  it("keeps the pnpm store out of the checkout, on the project's own mount", () => {
+    // The project root is its own mount, so pnpm would otherwise put its
+    // store at the mount's root: the main checkout.
+    const spec = buildLaunchSpec(env, input, { accountLinkTargets: [], hasGitconfig: false });
+    expect(spec.env).toContain("npm_config_store_dir=/home/tester/work/app/.aio/pnpm-store");
+    expect(spec.env).toContain("pnpm_config_store_dir=/home/tester/work/app/.aio/pnpm-store");
+  });
+
   it("keeps the engine token out of the container's environment", () => {
     const spec = buildLaunchSpec(env, input, { accountLinkTargets: [], hasGitconfig: false });
     expect(spec.env.join("\n")).not.toContain(input.engine.token);
   });
 
   // The golden spec is the 3.3.5 launch minus the port pool, plus the engine.
-  // It differs from 3.3.5 in the command and one variable on purpose: the
+  // It differs from 3.3.5 in the command and some variables on purpose: the
   // container runs the image's keeper.sh (which also keeps the engine
   // running) in place of the inline 3.3.5 keeper, and gets
   // AIO_STATE_DIR, where keeper.sh and the engine share state. The
-  // engine token is a file in that directory, not a variable.
+  // engine token is a file in that directory, not a variable. It also
+  // sets the pnpm store folder.
   it("matches the inventoried 3.3.5 launch, minus the pool, plus the engine", () => {
     const spec = buildLaunchSpec(env, input, {
       accountLinkTargets: ["/home/tester/.ai-orchestrator/transcripts/claude"],
@@ -131,6 +140,8 @@ describe("buildLaunchSpec", () => {
         "IS_SANDBOX=1",
         "DISABLE_AUTOUPDATER=1",
         "GIT_CONFIG_GLOBAL=/home/tester/work/app/gitconfig",
+        "npm_config_store_dir=/home/tester/work/app/.aio/pnpm-store",
+        "pnpm_config_store_dir=/home/tester/work/app/.aio/pnpm-store",
         "AIO_ENGINE_TOKEN_FILE=/run/aio/engine.token",
         "AIO_ENGINE_PORT=20411",
         "AIO_PROJECT_ROOT=/home/tester/work/app",
