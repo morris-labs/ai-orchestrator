@@ -6,6 +6,31 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Changed
+
+- A build's review run has no verification floor, so it fixes every
+  confirmed finding, P3 included. Standalone review runs keep their defaults.
+
+### Fixed
+
+- A read-only call that failed its worktree check after its CLI answered
+  recorded 0 tokens. Its lease, event, and failed call record now hold what
+  it spent, and a call that used a blocked model writes a failed call record.
+- pnpm put its store in the project's main checkout, because the project is
+  a mount of its own in the container. A package install in any box then
+  left a `.pnpm-store` folder there and failed concurrent read-only engine
+  calls. Containers now keep the store in `.aio/pnpm-store`, which git
+  ignores. The setting takes effect when a project's container is created.
+- The task gate failed a task when setting aside later tasks' tests left a
+  package with no test files and the test runner exited non-zero for that.
+  Such a run now passes, so a repository needs no `passWithNoTests` setting.
+- Review runs, token samples, and call records left out the tokens of the
+  subagents that large-tier Codex calls spawn. They now count toward the
+  spawning call.
+- Disprover prompts say that the engine reruns a reproduction script in a
+  fresh checkout without installed dependencies, where Node.js strips
+  TypeScript types only, so scripts don't fail on syntax that needs a build.
+
 ## [3.4.0] - 2026-11-27
 
 ### Added
