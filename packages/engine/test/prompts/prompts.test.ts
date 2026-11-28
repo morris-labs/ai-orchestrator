@@ -181,6 +181,23 @@ describe("untrusted text in prompts", () => {
   });
 });
 
+describe("disprover prompts' reproduction scripts", () => {
+  const range = { repoPath: "/repo", baseSha: "0000000", tipSha: "1111111", tipRef: "main" };
+  it("say where the engine reruns a script and what that checkout lacks", () => {
+    for (const baseWorktree of [null, "/base"]) {
+      const base = { range, scratchDir: "/scratch", baseWorktree, policySection: "" };
+      for (const prompt of [
+        disproverPrompt({ ...base, finding }),
+        disproverPrompt({ ...base, finding, standard: true }),
+        batchDisproverPrompt({ ...base, findings: [finding] }),
+      ]) {
+        expect(prompt).toContain("fresh checkout without installed dependencies");
+        expect(prompt).toMatch(/strip-only mode/);
+      }
+    }
+  });
+});
+
 describe("disprover prompts of a whole-project run", () => {
   const wholeRange = {
     repoPath: "/repo",

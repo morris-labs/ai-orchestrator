@@ -113,6 +113,14 @@ export interface RangeInfo {
 const NO_BASE_RULE =
   "This run reviews the whole project, so every flaw counts. Judge each finding at the tip alone, and set `presentAtBase` to false.";
 
+/**
+ * Where the engine reruns a reproduction script: a checkout of its own,
+ * made from git, so it holds no ignored files. A script that needs the
+ * repository's installed tools fails there and proves nothing.
+ */
+const SCRIPT_CHECKOUT_RULE =
+  "The engine reruns the script in a fresh checkout without installed dependencies: no `node_modules`, virtual environment, or build output, so the repository's own test runner, `tsx`, and packages aren't there. Use only the language's runtime and standard library. Node.js runs TypeScript in strip-only mode, which can't load enums, parameter properties, or namespaces; for such code, copy the logic under test into the script, or verify by reading the code.";
+
 /** What a reviewer reads in a whole-project run. */
 const WHOLE_PROJECT_REVIEW =
   "This run reviews the project as it ships, not a change, and every file appears as new. Set `introduced` to true on every finding; with no base to compare, the engine records it as unknown.";
@@ -480,6 +488,7 @@ export function disproverPrompt(input: DisproverPromptInput): string {
             `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
             `Where you can, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument.`,
             "The engine runs your script against the tip; you might not be able to run it yourself. Return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content`.",
+            SCRIPT_CHECKOUT_RULE,
             "Base your verdict on your own reading too: a script that doesn't run counts for nothing.",
             NO_BASE_RULE,
           ].join("\n")
@@ -488,6 +497,7 @@ export function disproverPrompt(input: DisproverPromptInput): string {
             `A checkout of the branch point (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
             `Where you can, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument, so it runs against both checkouts.`,
             "The engine runs your script against the tip and the base; you might not be able to run it yourself. Return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content` and the engine writes it.",
+            SCRIPT_CHECKOUT_RULE,
             "Base your verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
             "Set `presentAtBase` to true when the same flaw exists in the base checkout.",
           ].join("\n"),
@@ -560,6 +570,7 @@ function terseVerifySteps(input: {
       `Tip: ${input.range.repoPath}. Don't edit it.`,
       `Optional reproduction script: write it in ${input.scratchDir}, the only writable place, with a name unique to the finding. Exit 1 when the flaw reproduces, 0 when it doesn't, any other code otherwise. The first argument is the repository directory.`,
       "The engine runs the script at the tip. Return its path relative to the scratch directory, or `null` for code reading. If you can't write the file, put its text in `script.content`.",
+      SCRIPT_CHECKOUT_RULE,
       NO_BASE_RULE,
     ];
   }
@@ -567,6 +578,7 @@ function terseVerifySteps(input: {
     `Tip: ${input.range.repoPath}. Branch point (${input.range.baseSha}): ${input.baseWorktree}. Don't edit either.`,
     `Optional reproduction script: write it in ${input.scratchDir}, the only writable place, with a name unique to the finding. Exit 1 when the flaw reproduces, 0 when it doesn't, any other code otherwise. The first argument is the repository directory.`,
     "The engine runs the script at the tip and the base. Return its path relative to the scratch directory, or `null` for code reading. If you can't write the file, put its text in `script.content`.",
+    SCRIPT_CHECKOUT_RULE,
     "Base the verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
   ];
 }
