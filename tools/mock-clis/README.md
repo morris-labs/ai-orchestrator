@@ -99,6 +99,7 @@ Each response takes these fields, all optional:
 | `model` | Copilot only: the model that automatic selection picks. |
 | `costUsd` | Claude only: the call's `total_cost_usd`. |
 | `sessionId` | The session or thread id to report on a fresh call. |
+| `subagents` | Codex only: `[{ "tokens": { "input": N, "output": N } }]`. For each entry, the mock writes a subagent's rollout file under `CODEX_HOME`, with `thread_source: subagent`, the call's thread in `parent_thread_id`, and these tokens as its total. |
 | `writeFiles` | `{ "relative/path": "content" }` written in the working directory, but only when the call may write: Codex with a writable sandbox, Copilot with `--allow-all-tools`, Claude outside `dontAsk` mode. |
 | `commit` | A commit message. After `writeFiles`, the mock commits every change in the working directory with it, as an agent that commits its work does. Needs `writeFiles` and the same write permission. A clean working directory gets no commit. |
 | `busCalls` | Claude and Codex only: `[{ "tool": "send_message", "arguments": { ... }, "server": "NAME" }]`, MCP tool calls that the mock makes before it answers. `server` is optional and defaults to the first configured server. |

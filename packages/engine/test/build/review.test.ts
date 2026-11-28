@@ -172,6 +172,39 @@ describe("the review step", () => {
     expect(runLeases.every((r) => r.buildId === started.id)).toBe(true);
   });
 
+  it("counts the tokens of a Codex reviewer's subagents into its call", async () => {
+    const home = tempDir("aio-codex-home-");
+    const world = await buildWorld({ review: true, accountDirs: { codex: () => home } });
+    const SUBAGENT = { tokens: { input: 7000, output: 30 } };
+    const codex = refusingReviewers().map((r) => ({
+      ...r,
+      tokens: { input: 1000, output: 10 },
+      subagents: [SUBAGENT],
+    }));
+    world.script({ claude: refusingReviewers(), codex });
+
+    await world.start("cart-total");
+    await world.settle("cart-total");
+
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    const finished = world.events
+      .ofType("agent.finished")
+      .filter((e) => e.runId === runId && e.vendor === "codex" && e.outcome === "ok");
+    expect(finished.length).toBeGreaterThan(0);
+    for (const e of finished) {
+      expect(e.tokens).toMatchObject({ in: 8000, out: 40 });
+    }
+    const rounds = JSON.parse(
+      readFileSync(join(world.root, RUNS_DIR, runId, "rounds.json"), "utf8"),
+    ) as Array<{ perVendor: Record<string, { tokensIn: number; tokensOut: number }> }>;
+    const codexIn = rounds.reduce((sum, r) => sum + (r.perVendor.codex?.tokensIn ?? 0), 0);
+    const failedIn = world.events
+      .ofType("agent.finished")
+      .filter((e) => e.runId === runId && e.vendor === "codex" && e.outcome !== "ok")
+      .reduce((sum, e) => sum + e.tokens.in, 0);
+    expect(codexIn).toBe(finished.length * 8000 + failedIn);
+  });
+
   it("starts its review run without a box, so no box gets a hold-edits message", async () => {
     const world = await buildWorld({ review: true });
     world.script({

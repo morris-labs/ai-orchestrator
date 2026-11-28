@@ -7,6 +7,7 @@ import {
   CodexAdapter,
   CodexStreamParser,
   codexRateLimitSamples,
+  codexSubagentTokens,
   findRolloutFile,
 } from "../../src/adapters/codex.js";
 import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapters/output.js";
@@ -266,5 +267,57 @@ describe("CodexAdapter.buildArgs", () => {
     expect(args.slice(0, 5)).toEqual(["exec", "--sandbox", "danger-full-access", "resume", "t1"]);
     expect(args.at(-1)).toBe("-");
     expect(args).not.toContain("--full-auto");
+  });
+});
+
+describe("codexSubagentTokens", () => {
+  const meta = (id: string, parent: string) =>
+    JSON.stringify({
+      timestamp: "2026-11-27T17:00:00.000Z",
+      type: "session_meta",
+      payload: { id, parent_thread_id: parent, thread_source: "subagent" },
+    });
+  const count = (at: string, input: number, cached: number, output: number) =>
+    JSON.stringify({
+      timestamp: at,
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            output_tokens: output,
+          },
+        },
+      },
+    });
+
+  it("adds the parent's subagents and theirs, only for the part after the call started", () => {
+    const sessions = tempDir("aio-codex-sessions-");
+    const day = join(sessions, "2026", "11", "27");
+    mkdirSync(day, { recursive: true });
+    const since = Date.parse("2026-11-27T17:10:00.000Z");
+    const file = (id: string, body: string[]) =>
+      writeFileSync(join(day, `rollout-2026-11-27T17-00-00-${id}.jsonl`), `${body.join("\n")}\n`);
+    // A subagent that an earlier call spawned and this call used again.
+    file("sub-a", [
+      meta("sub-a", "parent"),
+      count("2026-11-27T17:05:00.000Z", 1000, 800, 10),
+      count("2026-11-27T17:11:00.000Z", 3000, 2000, 30),
+    ]);
+    // Its own subagent, spawned during this call.
+    file("sub-b", [meta("sub-b", "sub-a"), count("2026-11-27T17:12:00.000Z", 500, 100, 5)]);
+    // Another thread's subagent.
+    file("sub-c", [meta("sub-c", "other"), count("2026-11-27T17:12:00.000Z", 9000, 0, 9)]);
+
+    expect(codexSubagentTokens(sessions, "parent", since)).toEqual({
+      input: 2500,
+      output: 25,
+      fresh: 2500 - 1300,
+      cacheWrite: 0,
+      cacheRead: 1300,
+    });
+    expect(codexSubagentTokens(sessions, "nobody", since)).toBeUndefined();
   });
 });

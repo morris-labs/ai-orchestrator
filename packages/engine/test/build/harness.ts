@@ -49,6 +49,8 @@ export interface MockResponse {
   delayMs?: number;
   /** The tokens the call reports in its usage. */
   tokens?: { input: number; output: number };
+  /** Codex only: the subagents that the call spawns, each with the tokens its rollout reports. */
+  subagents?: { tokens: { input: number; output: number } }[];
   /** MCP tool calls that the mock CLI makes, such as team chat messages. */
   busCalls?: { tool: string; arguments?: Record<string, unknown>; server?: string }[];
 }
