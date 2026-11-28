@@ -1,5 +1,6 @@
 // The review step: one review pipeline run on the build diff, in the build
-// worktree. The Developer seat fills the fixer role, as a fresh agent with
+// worktree, with no verification floor, so the run fixes every confirmed
+// finding. The Developer seat fills the fixer role, as a fresh agent with
 // the task context in its prompt; in the single-session flow, the fixer
 // resumes the Developer's session instead. A clean run moves the build on; anything
 // else becomes an escalation that names the run.
@@ -18,6 +19,7 @@ import {
   type RunState,
   type RunStatus,
   type SeatPlacement,
+  type Severity,
   type StopReason,
 } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
@@ -31,6 +33,13 @@ import type { StepOutcome } from "./types.js";
 
 /** The seat that fills the review run's fixer role. */
 export const REVIEW_FIXER_SEAT = "developer";
+
+/**
+ * The build review run's verification floor: the lowest severity, so a
+ * disprover checks every finding and the fixer gets every confirmed one, P3
+ * included. A standalone run at the `standard` depth keeps its P2 floor.
+ */
+export const BUILD_REVIEW_VERIFY_FLOOR: Severity = "nit";
 
 /** How often the step reads its run's state by default. */
 export const REVIEW_POLL_MS = 2000;
@@ -130,6 +139,7 @@ async function startRun(ctx: BuildContext, runs: ReviewRuns, runId: string): Pro
       base: ctx.state.base,
       tip: ctx.state.branch,
       roles: { fixer: placement.vendor },
+      verifyFloor: BUILD_REVIEW_VERIFY_FLOOR,
       build: {
         buildId: ctx.state.id,
         fixer: {

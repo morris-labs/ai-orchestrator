@@ -439,7 +439,8 @@ Each milestone runs these steps in order:
 6. **Simplify.** The Simplifier cleans up, and the tests must stay green.
 7. **Review.** The engine starts a review pipeline run, with the review lenses
    of every seated specialist as focus areas. The Developer seat fills the
-   fixer role.
+   fixer role. The run has no verification floor, so a disprover checks every
+   finding and the fixer gets every confirmed one, P3 included.
 8. **Release ready.** In release train mode, the milestone goes to the
    post-push loop. In single PR mode, the next milestone starts.
 
