@@ -6,6 +6,8 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-11-28
+
 ### Changed
 
 - A build's review run has no verification floor, so it fixes every

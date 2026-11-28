@@ -1,6 +1,6 @@
 {
   "name": "@aio/contracts",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "description": "Zod schemas and TypeScript types shared by every AI Orchestrator package.",
   "private": true,
   "type": "module",

@@ -1,7 +1,7 @@
 {
   "name": "@aio/boxes",
   "productName": "AI Orchestrator",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "desktopName": "aio-boxes.desktop",
   "description": "The aio app: manage boxes, conversations, and their terminals.",
   "private": true,
